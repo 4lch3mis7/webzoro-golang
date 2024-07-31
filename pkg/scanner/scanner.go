@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/4lch3mis7/webzoro-golang/pkg/utils"
+	"github.com/4lch3mis7/webzoro-golang/pkg/enum/subdomain"
 )
 
 type Scanner struct {
@@ -26,15 +26,14 @@ func Scan(t *Target) {
 
 // Enumerates subdomain of a domain and return a list
 func EnumSubdomains(domain string, outputFile string) []string {
-	fmt.Println("[+] Enumerating subdomains vis sublist3r")
-	os.Create(outputFile)
-	cmd := exec.Command("sublist3r", "-d", domain, "-o", outputFile)
-	_, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("[+] Subdomains:", outputFile)
-	return utils.ReadLines(outputFile)
+
+	// Enumerate sudomains from CT logs
+	ctDomains := subdomain.CrtSh(domain)
+
+	// Enumerate subdomains via DNS lookup (brute force)
+
+	return ctDomains
+
 }
 
 // Run a nmap scan on the target (domain or IP)

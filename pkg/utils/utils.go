@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -34,7 +36,7 @@ func CreateDirIfNotExists(path string) {
 	}
 }
 
-// Read a file line-by-line
+// Read a local file line-by-line
 func ReadLines(filePath string) []string {
 	var lines []string
 	file, err := os.Open(filePath)
@@ -48,4 +50,47 @@ func ReadLines(filePath string) []string {
 	}
 	file.Close()
 	return lines
+}
+
+// Read a remote file line-by-line
+func ReadLinesRemote(url string) []string {
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	body := strings.TrimSpace(string(bodyBytes))
+	return strings.Split(body, "\n")
+}
+
+// Read a local or remote file line-by-line into a channel of string
+func ReadLinesCh(path string, ch chan<- string) {
+	if strings.HasPrefix(path, "http") {
+		for _, line := range ReadLinesRemote(path) {
+			ch <- line
+		}
+	} else {
+		for _, line := range ReadLines(path) {
+			ch <- line
+		}
+	}
+	close(ch)
+}
+
+// Remove duplicate items from a slice
+func Unique[T comparable](items []T) []T {
+	keys := make(map[T]bool)
+	result := []T{}
+	for _, e := range items {
+		if !keys[e] {
+			keys[e] = true
+			result = append(result, e)
+		}
+	}
+	return result
 }

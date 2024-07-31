@@ -3,14 +3,14 @@ package main
 import (
 	"fmt"
 	"os/exec"
-	"path"
 
 	"github.com/4lch3mis7/webzoro-golang/pkg/scanner"
+	"github.com/4lch3mis7/webzoro-golang/pkg/utils"
 	"github.com/alecthomas/kingpin/v2"
 )
 
 var (
-	host = kingpin.Arg("host", "Host (Domain or IP)").String()
+	host = kingpin.Arg("host", "Host (domain or IP)").String()
 	// tls  = kingpin.Flag("tls", "SSL/TLS").Default("false").Bool()
 )
 
@@ -33,14 +33,33 @@ func main() {
 		return
 	}
 
-	// Subdomain Enumeration
-	if target.IsDomain() {
-		wd := target.GetWorkingDir()
-		scanner.EnumSubdomains(target.Target, path.Join(wd, "sublist3r.out"))
+	// DNS Lookup
+	lines := utils.ReadLinesRemote("https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/DNS/namelist.txt")
+	for _, i := range lines {
+		fmt.Println(i)
 	}
+	// enumSubdomain.DNSBrute(target.Target, *subdomainWordlist)
 
-	// Run Scan on a Target
-	scanner.Scan(&target)
+	// wCh := make(chan string)
+	// oCh := make(chan string)
+	// utils.ReadLinesCh(*subdomainWordlist, wCh)
+	// enum.DNSBruteConc(target.Target, wCh, oCh)
+
+	// for i := range wCh {
+	// 	fmt.Println(i)
+	// }
+
+	// // Subdomain Enumeration
+	// if target.IsDomain() {
+	// 	// wd := target.GetWorkingDir()
+	// 	// scanner.EnumSubdomains(target.Target, path.Join(wd, "sublist3r.out"))
+	// 	for i, s := range enum.EnumSubdomains(target.Target) {
+	// 		fmt.Println(i, s)
+	// 	}
+	// }
+
+	// // Run Scan on a Target
+	// scanner.Scan(&target)
 
 }
 
