@@ -82,7 +82,7 @@ func GetSubdomainsFromSubfinder(domain string) []string {
 	// Extract subdomains from the output
 	out = strings.TrimSpace(out)
 	result := strings.Split(out, "\n")
-	log.Println("[i] Found", len(result), "subdomains from subfinder")
+	log.Println("[i] Found", len(result), "unique subdomains from subfinder")
 
 	return result
 }

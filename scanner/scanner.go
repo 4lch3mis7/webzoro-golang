@@ -25,10 +25,21 @@ func Run(t *Target) {
 		fmt.Println("[i] Subdomains saved to", path)
 	}
 
-	// Scan subdomains
+	// Run Nuclei on the subdomains
 	for _, subdomain := range subdomains {
-		fmt.Println(subdomain)
+		outDir := t.OutDir() + "/nuclei"
+		utils.CheckAndCreateDir(outDir)
+		Nuclei(subdomain, outDir+"/"+subdomain+".stdout")
 	}
-
-	// Nuclei scan
+	// var wg sync.WaitGroup
+	// for _, subdomain := range subdomains {
+	// 	wg.Add(1)
+	// 	go func(wg *sync.WaitGroup, subdomain string) {
+	// 		outDir := t.OutDir() + "/nuclei"
+	// 		utils.CheckAndCreateDir(outDir)
+	// 		Nuclei(subdomain, outDir+"/"+subdomain+".stdout")
+	// 		wg.Done()
+	// 	}(&wg, subdomain)
+	// }
+	// wg.Wait()
 }

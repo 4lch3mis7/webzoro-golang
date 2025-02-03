@@ -23,6 +23,18 @@ func Subfinder(domain, outputFile string) []string {
 	return utils.ReadLines(outputFile)
 }
 
+// Run a nuclei scan on the target.
+func Nuclei(target, outputFile string) []string {
+	fmt.Println("[+] Running Nuclei scan")
+	os.Create(outputFile)
+	cmd := exec.Command("nuclei", "-as", "-silent", "-target", target, "-o", outputFile)
+	if _, err := cmd.CombinedOutput(); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("[+] Nuclei scan results:", outputFile)
+	return utils.ReadLines(outputFile)
+}
+
 // Run a nmap scan on the target (domain or IP)
 func Nmap(target, outputFile string) {
 	fmt.Println("[+] Nmap scan started")
