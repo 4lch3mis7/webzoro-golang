@@ -16,29 +16,18 @@ import (
 //
 // This function takes a domain name as an argument and returns a list of
 // subdomains found in the Certificate Transparency logs and via DNS lookup.
-func EnumSubdomains(domain string, out chan<- string) {
+func EnumSubdomains(domain string) []string {
 	// Enumerating subdomains via Certificate Transparency logs
 	ctSubs := GetSubdomainsFromCT(domain)
 
 	// Enumerating subdomains via subfinder
 	subfinderSubs := GetSubdomainsFromSubfinder(domain)
 
-	// // Enumerating subdomains via DNS lookup
-	// dnsDomains := GetSubdomainsFromDNS(domain)
-	// for _, v := range dnsDomains {
-	// 	out <- v
-	// }
-
 	// Combine all subdomains
 	allSubs := append(ctSubs, subfinderSubs...)
 	allSubs = utils.Unique(allSubs)
 
-	// Send the subdomains to the output channel
-	for _, v := range allSubs {
-		out <- v
-	}
-
-	close(out)
+	return allSubs
 }
 
 // Enumerate subdomains using Certificate Transparency logs.
@@ -74,9 +63,6 @@ func GetSubdomainsFromCT(domain string) []string {
 	result = utils.Unique(result)
 	log.Println("[i] Found", len(result), "unique subdomains from CT logs")
 
-	for _, v := range result {
-		log.Println(v)
-	}
 	return result
 }
 
@@ -98,8 +84,5 @@ func GetSubdomainsFromSubfinder(domain string) []string {
 	result := strings.Split(out, "\n")
 	log.Println("[i] Found", len(result), "subdomains from subfinder")
 
-	for _, v := range result {
-		log.Println(v)
-	}
 	return result
 }

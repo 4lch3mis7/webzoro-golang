@@ -2,28 +2,31 @@ package scanner
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/4lch3mis7/webzoro-golang/enum"
+	"github.com/4lch3mis7/webzoro-golang/utils"
 )
 
 type Scanner struct {
-	Target *Target
+	Target    *Target
+	OutputDir string
 }
 
 func Run(t *Target) {
 
 	// Enumerate subdomains
-	subCh := make(chan string)
-	enum.EnumSubdomains(t.Target, subCh)
+	subdomains := enum.EnumSubdomains(t.Target)
 
-	for subdomain := range subCh {
-		fmt.Println(subdomain)
+	// Save subdomains to a file.
+	if len(subdomains) > 0 {
+		path := t.GetWorkingDir() + "/subdomains.txt"
+		utils.SaveToFile(path, strings.Join(subdomains, "\n"))
+		fmt.Println("[i] Subdomains saved to", path)
 	}
 
-	// // If the target is a domain or an IP
-	// if t.IsDomain() || t.IsIP() {
-	// 	// Nmap(t.Target, path.Join(t.Target, "nmap.out"))
-	// 	FFUF(t.Url(), t.GetWorkingDir()+"/ffuf.out")
-	// 	// Dirsearch(t.Url(), t.GetWorkingDir()+"/dirsearch.out")
-	// }
+	// Scan subdomains
+	for _, subdomain := range subdomains {
+		fmt.Println(subdomain)
+	}
 }
