@@ -29,4 +29,6 @@ func Run(t *Target) {
 	for _, subdomain := range subdomains {
 		fmt.Println(subdomain)
 	}
+
+	// Nuclei scan
 }

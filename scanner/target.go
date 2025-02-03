@@ -45,7 +45,7 @@ func (t *Target) GetWorkingDir() string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	dir := pwd + "/" + t.Target
+	dir := pwd + "/.local/" + t.Target
 	utils.CheckAndCreateDir(dir)
 	return dir
 }
