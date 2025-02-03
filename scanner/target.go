@@ -39,8 +39,9 @@ func (t *Target) IsUrl() bool {
 	return !t.IsDomain() && !t.IsIP() && urlRegexp.MatchString(t.Target)
 }
 
-// Get working directory of the target. Creates a directory if not exists.
-func (t *Target) GetWorkingDir() string {
+// Returns the output directory for the target. The output directory is
+// created in the current working directory and is named after the target.
+func (t *Target) OutDir() string {
 	pwd, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)

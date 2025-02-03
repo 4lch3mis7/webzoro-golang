@@ -20,7 +20,7 @@ func Run(t *Target) {
 
 	// Save subdomains to a file.
 	if len(subdomains) > 0 {
-		path := t.GetWorkingDir() + "/subdomains.txt"
+		path := t.OutDir() + "/subdomains.txt"
 		utils.SaveToFile(path, strings.Join(subdomains, "\n"))
 		fmt.Println("[i] Subdomains saved to", path)
 	}
