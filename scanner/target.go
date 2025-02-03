@@ -5,7 +5,7 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/4lch3mis7/webzoro-golang/pkg/utils"
+	"github.com/4lch3mis7/webzoro-golang/utils"
 )
 
 var (
@@ -15,7 +15,8 @@ var (
 )
 
 type Target struct {
-	Target string
+	Target     string
+	Subdomains []string
 }
 
 // Returns `true` if the Target is either an IP address or a domain name
@@ -45,7 +46,7 @@ func (t *Target) GetWorkingDir() string {
 		log.Fatal(err)
 	}
 	dir := pwd + "/" + t.Target
-	utils.CreateDirIfNotExists(dir)
+	utils.CheckAndCreateDir(dir)
 	return dir
 }
 

@@ -2,38 +2,25 @@ package utils
 
 import (
 	"bufio"
-	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 )
 
-// CmdExec executes a command and returns the output as a string.
-// If the command fails, it returns the error.
-func CmdExec(cmd *exec.Cmd) (string, error) {
-	out, err := cmd.Output()
+func SaveToFile(fileName string, text string) error {
+	file, err := os.Create(fileName)
 	if err != nil {
-		return "", err
+		return err
 	}
-	return string(out), nil
-}
-
-// Get Domain from URL
-func GetDomainFromUrl(url string) string {
-	return strings.Split(strings.Split(url, "://")[1], "/")[0]
-}
-
-// Create directory if not exists
-func CreateDirIfNotExists(path string) {
-	if _, err := os.Stat(path); err == nil {
-		fmt.Println("[i] Existing path:", path)
-	} else if errors.Is(err, os.ErrNotExist) {
-		os.MkdirAll(path, 0755)
+	defer file.Close()
+	_, err = io.WriteString(file, text)
+	if err != nil {
+		return err
 	}
+
+	return file.Close()
 }
 
 // Read a local file line-by-line
@@ -68,7 +55,8 @@ func ReadLinesRemote(url string) []string {
 	return strings.Split(body, "\n")
 }
 
-// Read a local or remote file line-by-line into a channel of string
+// Read a local or remote file line-by-line into a channel of string.
+// The channel is closed after all lines are read.
 func ReadLinesCh(path string, ch chan<- string) {
 	if strings.HasPrefix(path, "http") {
 		for _, line := range ReadLinesRemote(path) {
@@ -80,17 +68,4 @@ func ReadLinesCh(path string, ch chan<- string) {
 		}
 	}
 	close(ch)
-}
-
-// Remove duplicate items from a slice
-func Unique[T comparable](items []T) []T {
-	keys := make(map[T]bool)
-	result := []T{}
-	for _, e := range items {
-		if !keys[e] {
-			keys[e] = true
-			result = append(result, e)
-		}
-	}
-	return result
 }

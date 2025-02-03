@@ -8,36 +8,23 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/4lch3mis7/webzoro-golang/pkg/enum/subdomain"
+	"github.com/4lch3mis7/webzoro-golang/utils"
 )
 
-type Scanner struct {
-	Target *Target
-}
-
-func Scan(t *Target) {
-	// If the target is a domain or an IP
-	if t.IsDomain() || t.IsIP() {
-		// Nmap(t.Target, path.Join(t.Target, "nmap.out"))
-		FFUF(t.Url(), t.GetWorkingDir()+"/ffuf.out")
-		// Dirsearch(t.Url(), t.GetWorkingDir()+"/dirsearch.out")
+// Enumerate subdomains using subfinder
+func Subfinder(domain, outputFile string) []string {
+	log.Println("[i] Enumerating subdomains from Subfinder")
+	os.Create(outputFile)
+	cmd := exec.Command("subfinder", "-d", domain, "-o", outputFile)
+	if _, err := cmd.CombinedOutput(); err != nil {
+		log.Fatal(err)
 	}
-}
-
-// Enumerates subdomain of a domain and return a list
-func EnumSubdomains(domain string, outputFile string) []string {
-
-	// Enumerate sudomains from CT logs
-	ctDomains := subdomain.CrtSh(domain)
-
-	// Enumerate subdomains via DNS lookup (brute force)
-
-	return ctDomains
-
+	log.Println("[i] Subdomains enumerated via Subfinder")
+	return utils.ReadLines(outputFile)
 }
 
 // Run a nmap scan on the target (domain or IP)
-func Nmap(target string, outputFile string) {
+func Nmap(target, outputFile string) {
 	fmt.Println("[+] Nmap scan started")
 	os.Create(outputFile)
 	cmd := exec.Command("nmap", target, "-sT", "-sV", "-sC", "-A", "-Pn", "-oN", outputFile)
@@ -49,7 +36,7 @@ func Nmap(target string, outputFile string) {
 }
 
 // Enumerate web directories for the target URL using `dirsearch`
-func Dirsearch(targetUrl string, outputFile string) {
+func Dirsearch(targetUrl, outputFile string) {
 	fmt.Println("[+] Enumerating directories via dirsearch")
 	os.Create(outputFile)
 	cmd := exec.Command("dirsearch", "-F", "-u", targetUrl, "-o", outputFile)
@@ -60,7 +47,7 @@ func Dirsearch(targetUrl string, outputFile string) {
 }
 
 // Enumerate web directories for the target URL using `ffuf`
-func FFUF(targetUrl string, outputFile string) {
+func FFUF(targetUrl, outputFile string) {
 	fmt.Println("[+] Enumerating directories via FFUF")
 
 	os.Create(outputFile)
