@@ -48,6 +48,12 @@ func Run(t *Target) {
 	// Port scanning (Naabu) + Service and Version detection (Nmap)
 	results := NaabuWithServiceScan(t)
 	fmt.Println("[i] Scan results:\n", results)
+
+	// Vulnerability lookup on discovered open services using ProjectDiscovery vulnx
+	if len(results.Ports) > 0 {
+		vulnReport := LookupServiceCVEs(t, results.Ports, "cves.json")
+		fmt.Println(vulnReport)
+	}
 }
 
 func Show(t *Target) {
