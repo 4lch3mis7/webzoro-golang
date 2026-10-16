@@ -35,11 +35,18 @@ func (r VulnReport) String() string {
 
 	var sb strings.Builder
 	totalVulns := 0
+	totalExploits := 0
 	for _, s := range r.Services {
 		totalVulns += len(s.Vulnerabilities)
+		for _, v := range s.Vulnerabilities {
+			if v.IsKev || v.IsPoc || len(v.Pocs) > 0 || v.PocCount > 0 {
+				totalExploits++
+			}
+		}
 	}
 
-	sb.WriteString(fmt.Sprintf("\n[+] Found %d potential vulnerabilities across %d services:\n", totalVulns, len(r.Services)))
+	sb.WriteString(fmt.Sprintf("\n[+] Found %d potential vulnerabilities across %d services (%d with public exploits/KEV):\n",
+		totalVulns, len(r.Services), totalExploits))
 
 	for _, s := range r.Services {
 		svcLabel := s.Service
@@ -50,7 +57,18 @@ func (r VulnReport) String() string {
 			}
 		}
 
-		sb.WriteString(fmt.Sprintf("\n  PORT %d (%s):\n", s.Port, svcLabel))
+		exploitCount := 0
+		for _, v := range s.Vulnerabilities {
+			if v.IsKev || v.IsPoc || len(v.Pocs) > 0 || v.PocCount > 0 {
+				exploitCount++
+			}
+		}
+		exploitSummary := ""
+		if exploitCount > 0 {
+			exploitSummary = fmt.Sprintf(" [%d exploitable]", exploitCount)
+		}
+
+		sb.WriteString(fmt.Sprintf("\n  PORT %d (%s) - %d CVE(s)%s:\n", s.Port, svcLabel, len(s.Vulnerabilities), exploitSummary))
 		if len(s.Vulnerabilities) == 0 {
 			sb.WriteString("    (No CVEs matched)\n")
 			continue
@@ -70,12 +88,23 @@ func (r VulnReport) String() string {
 			if v.EpssScore > 0 {
 				tags = append(tags, fmt.Sprintf("EPSS: %.2f%%", v.EpssScore*100))
 			}
+
+			// Explicit exploit / PoC status
+			hasExploit := v.IsPoc || len(v.Pocs) > 0 || v.PocCount > 0
 			if v.IsKev {
-				tags = append(tags, "KEV: YES")
+				tags = append(tags, "Exploit: ACTIVE (KEV)")
+			} else if hasExploit {
+				if v.PocCount > 0 {
+					tags = append(tags, fmt.Sprintf("Exploit: YES (%d PoCs)", v.PocCount))
+				} else if len(v.Pocs) > 0 {
+					tags = append(tags, fmt.Sprintf("Exploit: YES (%d PoCs)", len(v.Pocs)))
+				} else {
+					tags = append(tags, "Exploit: YES")
+				}
+			} else {
+				tags = append(tags, "Exploit: NO")
 			}
-			if v.IsPoc {
-				tags = append(tags, "PoC: YES")
-			}
+
 			if v.IsTemplate {
 				tags = append(tags, "Nuclei: YES")
 			}
@@ -93,6 +122,25 @@ func (r VulnReport) String() string {
 					desc = desc[:117] + "..."
 				}
 				sb.WriteString(fmt.Sprintf("        %s\n", desc))
+			}
+
+			if r.Verbose && len(v.Pocs) > 0 {
+				sb.WriteString("        PoCs:\n")
+				maxPocs := 5
+				for i, poc := range v.Pocs {
+					if i >= maxPocs {
+						sb.WriteString(fmt.Sprintf("          ... and %d more PoC(s)\n", len(v.Pocs)-maxPocs))
+						break
+					}
+					if poc == nil || poc.URL == "" {
+						continue
+					}
+					source := poc.Source
+					if source == "" {
+						source = "Link"
+					}
+					sb.WriteString(fmt.Sprintf("          - [%s] %s\n", source, poc.URL))
+				}
 			}
 		}
 	}
