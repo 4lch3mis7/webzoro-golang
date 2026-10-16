@@ -9,7 +9,8 @@ import (
 )
 
 var (
-	host = kingpin.Arg("host", "Host (domain or IP)").String()
+	host    = kingpin.Arg("host", "Host (domain or IP)").String()
+	verbose = kingpin.Flag("verbose", "Verbose output").Short('v').Default("false").Bool()
 	// tls  = kingpin.Flag("tls", "SSL/TLS").Default("false").Bool()
 )
 
@@ -41,10 +42,11 @@ func main() {
 		return
 	}
 
-	fmt.Println("[+] All dependencies installed")
+	fmt.Println("[*] All dependencies installed")
 
 	target := scanner.Target{
-		Target: *host,
+		Target:  *host,
+		Verbose: *verbose,
 	}
 
 	if !target.IsValidHost() {

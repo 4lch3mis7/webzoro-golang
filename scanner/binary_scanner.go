@@ -25,7 +25,7 @@ func Subfinder(domain, outputFile string) []string {
 
 // Run a nuclei scan on the target.
 func Nuclei(target, outputFile string) []string {
-	fmt.Println("[+] Running Nuclei scan")
+	fmt.Println("[*] Running Nuclei scan")
 	os.Create(outputFile)
 	cmd := exec.Command("nuclei", "-as", "-silent", "-target", target, "-o", outputFile)
 	if _, err := cmd.CombinedOutput(); err != nil {
@@ -37,7 +37,7 @@ func Nuclei(target, outputFile string) []string {
 
 // Enumerate web directories for the target URL using `dirsearch`
 func Dirsearch(targetUrl, outputFile string) {
-	fmt.Println("[+] Enumerating directories via dirsearch")
+	fmt.Println("[*] Enumerating directories via dirsearch")
 	os.Create(outputFile)
 	cmd := exec.Command("dirsearch", "-F", "-u", targetUrl, "-o", outputFile)
 	if _, err := cmd.CombinedOutput(); err == nil {

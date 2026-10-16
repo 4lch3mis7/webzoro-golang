@@ -29,7 +29,7 @@ type naabuRecord struct {
 
 // Run a naabu scan natively using the Naabu Go runner
 func Naabu(t *Target, outputFile string) NaabuOutput {
-	fmt.Println("[+] Naabu scan started")
+	fmt.Println("[*] Naabu scan started")
 	if outputFile == "" {
 		outputFile = path.Join(t.OutDir(), "naabu.json")
 	} else if !strings.Contains(outputFile, "/") {
