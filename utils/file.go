@@ -9,6 +9,13 @@ import (
 	"strings"
 )
 
+// Check if a file exists
+func FileExists(filePath string) bool {
+	_, err := os.Stat(filePath)
+	return err == nil
+}
+
+// Save content to a file
 func SaveToFile(fileName string, text string) error {
 	file, err := os.Create(fileName)
 	if err != nil {
@@ -68,4 +75,8 @@ func ReadLinesCh(path string, ch chan<- string) {
 		}
 	}
 	close(ch)
+}
+
+func ExtractContent(content string, start, end string) string {
+	return strings.Split(strings.Split(content, start)[1], end)[0]
 }

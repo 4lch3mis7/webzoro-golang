@@ -1,0 +1,128 @@
+package scanner
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"path"
+	"strconv"
+	"strings"
+
+	"github.com/4lch3mis7/webzoro-golang/utils"
+	"github.com/projectdiscovery/goflags"
+	"github.com/projectdiscovery/naabu/v2/pkg/result"
+	"github.com/projectdiscovery/naabu/v2/pkg/runner"
+)
+
+type NaabuOutput struct {
+	Host  string
+	IP    string
+	Ports []int
+}
+
+type naabuRecord struct {
+	Host string `json:"host"`
+	IP   string `json:"ip"`
+	Port int    `json:"port"`
+}
+
+// Run a naabu scan natively using the Naabu Go runner
+func Naabu(t *Target, outputFile string) NaabuOutput {
+	fmt.Println("[+] Naabu scan started")
+	if outputFile == "" {
+		outputFile = path.Join(t.OutDir(), "naabu.json")
+	} else if !strings.Contains(outputFile, "/") {
+		outputFile = path.Join(t.OutDir(), outputFile)
+	}
+
+	output := NaabuOutput{
+		Host:  t.Target,
+		Ports: []int{},
+	}
+
+	if !utils.FileExists(outputFile) {
+		options := runner.Options{
+			Host:     goflags.StringSlice{t.Target},
+			ScanType: "c", // Connect scan (unprivileged; doesn't require root)
+			Output:   outputFile,
+			JSON:     true,
+			Silent:   true,
+			OnResult: func(hr *result.HostResult) {
+				if hr == nil {
+					return
+				}
+				if output.IP == "" && hr.IP != "" {
+					output.IP = hr.IP
+				}
+				if hr.Host != "" {
+					output.Host = hr.Host
+				}
+				for _, p := range hr.Ports {
+					if p != nil {
+						output.Ports = append(output.Ports, p.Port)
+					}
+				}
+			},
+		}
+
+		naabuRunner, err := runner.NewRunner(&options)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer naabuRunner.Close()
+
+		if err := naabuRunner.RunEnumeration(context.Background()); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		// Read from existing cached output file
+		lines := utils.ReadLines(outputFile)
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+
+			var rec naabuRecord
+			if err := json.Unmarshal([]byte(line), &rec); err == nil && rec.Port != 0 {
+				if output.IP == "" && rec.IP != "" {
+					output.IP = rec.IP
+				}
+				if rec.Host != "" {
+					output.Host = rec.Host
+				}
+				output.Ports = append(output.Ports, rec.Port)
+			} else if strings.Contains(line, ":") {
+				parts := strings.Split(line, ":")
+				if p, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+					output.Ports = append(output.Ports, p)
+				}
+			}
+		}
+	}
+
+	fmt.Println("[+] Naabu results:", outputFile)
+
+	if output.IP == "" && t.IsIP() {
+		output.IP = t.Target
+	}
+
+	return output
+}
+
+// NaabuWithServiceScan runs Naabu for fast port discovery, then runs Nmap on the discovered ports for service & version detection
+func NaabuWithServiceScan(t *Target) NmapOutput {
+	naabuOut := Naabu(t, "")
+	if len(naabuOut.Ports) == 0 {
+		return NmapOutput{IPAddress: naabuOut.IP, Hostname: naabuOut.Host}
+	}
+
+	var portList []string
+	for _, p := range naabuOut.Ports {
+		portList = append(portList, strconv.Itoa(p))
+	}
+	portsArg := strings.Join(portList, ",")
+
+	return Nmap(t, "nmap.xml", portsArg)
+}

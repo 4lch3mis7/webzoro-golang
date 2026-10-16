@@ -35,18 +35,6 @@ func Nuclei(target, outputFile string) []string {
 	return utils.ReadLines(outputFile)
 }
 
-// Run a nmap scan on the target (domain or IP)
-func Nmap(target, outputFile string) {
-	fmt.Println("[+] Nmap scan started")
-	os.Create(outputFile)
-	cmd := exec.Command("nmap", target, "-sT", "-sV", "-sC", "-A", "-Pn", "-oN", outputFile)
-	_, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("[+] Nmap results:", outputFile)
-}
-
 // Enumerate web directories for the target URL using `dirsearch`
 func Dirsearch(targetUrl, outputFile string) {
 	fmt.Println("[+] Enumerating directories via dirsearch")

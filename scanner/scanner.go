@@ -13,7 +13,7 @@ type Scanner struct {
 	OutputDir string
 }
 
-func Run(t *Target) {
+func EnumSubdomains(t *Target) {
 
 	// Enumerate subdomains
 	subdomains := enum.EnumSubdomains(t.Target)
@@ -42,4 +42,14 @@ func Run(t *Target) {
 	// 	}(&wg, subdomain)
 	// }
 	// wg.Wait()
+}
+
+func Run(t *Target) {
+	// Port scanning (Naabu) + Service and Version detection (Nmap)
+	results := NaabuWithServiceScan(t)
+	fmt.Println("[i] Scan results:\n", results)
+}
+
+func Show(t *Target) {
+
 }

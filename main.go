@@ -14,30 +14,10 @@ var (
 )
 
 var binariesRequired = []string{
-	"rustscan",
+	"nmap",
 	"subfinder",
 	"nuclei",
-}
-
-func main() {
-	kingpin.Parse()
-	fmt.Printf("[i] Binaries required (%d): %s\n", len(binariesRequired), binariesRequired)
-
-	target := scanner.Target{
-		Target: *host,
-	}
-
-	if !target.IsValidHost() {
-		fmt.Println("[!] Invalid host. Please provide a domain name or an IP Address")
-		return
-	}
-
-	if !target.IsDomain() {
-		fmt.Println("[!] Only domain names are supported for now")
-		return
-	}
-
-	scanner.Run(&target)
+	"ffuf",
 }
 
 // Check if the dependencies (binaries required) are installed or not
@@ -50,4 +30,27 @@ func CheckDependencies() []string {
 		}
 	}
 	return notInstalled
+}
+
+func main() {
+	kingpin.Parse()
+
+	missing := CheckDependencies()
+	if len(missing) > 0 {
+		fmt.Printf("[!] Missing dependencies (%d): %s\n", len(missing), missing)
+		return
+	}
+
+	fmt.Println("[+] All dependencies installed")
+
+	target := scanner.Target{
+		Target: *host,
+	}
+
+	if !target.IsValidHost() {
+		fmt.Println("[!] Invalid host. Please provide a domain name or an IP Address")
+		return
+	}
+
+	scanner.Run(&target)
 }
