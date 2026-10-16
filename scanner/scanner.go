@@ -54,6 +54,14 @@ func Run(t *Target) {
 		vulnReport := LookupServiceCVEs(t, results.Ports, "cves.json")
 		fmt.Println(vulnReport)
 	}
+
+	// Specialized service audits (e.g. MySQL security and default checks)
+	for _, p := range results.Ports {
+		if strings.Contains(strings.ToLower(p.Service), "mysql") || p.Port == 3306 {
+			mysqlAudit := AuditMySQL(t, p)
+			fmt.Println(mysqlAudit)
+		}
+	}
 }
 
 func Show(t *Target) {
