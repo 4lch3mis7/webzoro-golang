@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -172,38 +173,101 @@ func (r VulnReport) String() string {
 	return sb.String()
 }
 
-// LookupServiceCVEs queries the ProjectDiscovery vulnx API for CVEs matching open ports.
+// getCvesDir returns the path to the centralized CVEs directory at $HOME/.local/cves/.
+func getCvesDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	if home == "" {
+		home = "."
+	}
+	return filepath.Join(home, ".local", "cves")
+}
+
+// loadCachedCVE attempts to read an individual CVE-XXX.json from the cves directory.
+func loadCachedCVE(cvesDir, cveID string) (*vulnx.Vulnerability, bool) {
+	if cveID == "" {
+		return nil, false
+	}
+	cleanID := strings.ReplaceAll(cveID, "/", "_")
+	cleanID = strings.ReplaceAll(cleanID, "\\", "_")
+	if !strings.HasSuffix(cleanID, ".json") {
+		cleanID += ".json"
+	}
+	cvePath := filepath.Join(cvesDir, cleanID)
+	if !utils.FileExists(cvePath) {
+		return nil, false
+	}
+	data, err := os.ReadFile(cvePath)
+	if err != nil {
+		return nil, false
+	}
+	var v vulnx.Vulnerability
+	if err := json.Unmarshal(data, &v); err != nil {
+		return nil, false
+	}
+	return &v, true
+}
+
+// saveCachedCVE writes an individual vulnerability as CVE-XXX.json to the cves directory.
+func saveCachedCVE(cvesDir string, v vulnx.Vulnerability) error {
+	if v.CVEID == "" {
+		return nil
+	}
+	cleanID := strings.ReplaceAll(v.CVEID, "/", "_")
+	cleanID = strings.ReplaceAll(cleanID, "\\", "_")
+	cvePath := filepath.Join(cvesDir, cleanID+".json")
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(cvePath, data, 0644)
+}
+
+// LookupServiceCVEs queries the ProjectDiscovery vulnx API for CVEs matching open ports,
+// writing each CVE as a JSON file in $HOME/.local/cves/ and checking local files before querying vulnx.
 func LookupServiceCVEs(t *Target, ports []Port, outputFile string) VulnReport {
+	cvesDir := getCvesDir()
+	utils.CheckAndCreateDir(cvesDir)
+
 	reportFile := path.Join(t.OutDir(), outputFile)
 
-	// Check cache first
+	// Check target-specific cache first
 	if utils.FileExists(reportFile) {
 		data, err := os.ReadFile(reportFile)
 		if err == nil && len(data) > 0 {
 			var cached VulnReport
 			if err := json.Unmarshal(data, &cached); err == nil && len(cached.Services) > 0 {
 				cached.Verbose = t.Verbose
+				// Ensure all CVEs from cached target report are saved as individual JSONs in cves/
+				for _, s := range cached.Services {
+					for _, v := range s.Vulnerabilities {
+						_ = saveCachedCVE(cvesDir, v)
+					}
+				}
 				utils.LogSuccess("Loaded cached CVE results from %s", reportFile)
 				return cached
 			}
 		}
 	}
 
-	utils.LogAction("Checking for CVEs on open services via ProjectDiscovery vulnx...")
-
-	client, err := vulnx.New(
-		vulnx.WithKeyFromEnv(),
-	)
-	if err != nil {
-		utils.LogWarn("Failed to initialize vulnx client: %v", err)
-		return VulnReport{Target: t.Target, Verbose: t.Verbose}
+	// Load query index from cves/index.json to avoid repeating vulnx searches
+	indexFile := filepath.Join(cvesDir, "index.json")
+	queryIndex := make(map[string][]string)
+	if utils.FileExists(indexFile) {
+		if data, err := os.ReadFile(indexFile); err == nil {
+			_ = json.Unmarshal(data, &queryIndex)
+		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	var client *vulnx.Client
+	var ctx context.Context
+	var cancel context.CancelFunc
 
 	var services []ServiceVuln
 	rateLimited := false
+	indexModified := false
 
 portsLoop:
 	for _, p := range ports {
@@ -219,33 +283,83 @@ portsLoop:
 		var matchedVulns []vulnx.Vulnerability
 		seenCVEs := make(map[string]bool)
 
+		// 1. Check if any query for this service was already searched and cached
+		cachedQueryFound := false
 		for _, query := range queries {
-			params := vulnx.SearchParams{
-				Query: vulnx.Ptr(query),
-				Limit: vulnx.Ptr(10),
-			}
-
-			resp, err := client.SearchVulnerabilities(ctx, params)
-			if err != nil {
-				if strings.Contains(err.Error(), "rate limit") || strings.Contains(err.Error(), "429") {
-					utils.LogWarn("Vulnx API rate limit reached. Set PDCP_API_KEY environment variable for higher limits.")
-					rateLimited = true
-					break portsLoop
+			if cveIDs, ok := queryIndex[query]; ok {
+				cachedQueryFound = true
+				for _, cveID := range cveIDs {
+					if !seenCVEs[cveID] {
+						seenCVEs[cveID] = true
+						if v, ok := loadCachedCVE(cvesDir, cveID); ok {
+							matchedVulns = append(matchedVulns, *v)
+						}
+					}
 				}
-				continue
-			}
-
-			for _, v := range resp.Results {
-				if !seenCVEs[v.CVEID] {
-					seenCVEs[v.CVEID] = true
-					matchedVulns = append(matchedVulns, v)
-				}
-			}
-
-			// If we got good results from the primary query (e.g. CPE), no need to over-query
-			if len(matchedVulns) > 0 {
 				break
 			}
+		}
+
+		// 2. Query vulnx only if not already cached
+		if !cachedQueryFound {
+			if client == nil {
+				utils.LogAction("Checking for CVEs on open services via ProjectDiscovery vulnx...")
+				var err error
+				client, err = vulnx.New(vulnx.WithKeyFromEnv())
+				if err != nil {
+					utils.LogWarn("Failed to initialize vulnx client: %v", err)
+					break portsLoop
+				}
+				ctx, cancel = context.WithTimeout(context.Background(), 60*time.Second)
+				defer cancel()
+			}
+
+			for _, query := range queries {
+				params := vulnx.SearchParams{
+					Query: vulnx.Ptr(query),
+					Limit: vulnx.Ptr(10),
+				}
+
+				resp, err := client.SearchVulnerabilities(ctx, params)
+				if err != nil {
+					if strings.Contains(err.Error(), "rate limit") || strings.Contains(err.Error(), "429") {
+						utils.LogWarn("Vulnx API rate limit reached. Set PDCP_API_KEY environment variable for higher limits.")
+						rateLimited = true
+						break portsLoop
+					}
+					continue
+				}
+
+				var foundIDs []string
+				for _, v := range resp.Results {
+					if v.CVEID == "" {
+						continue
+					}
+					foundIDs = append(foundIDs, v.CVEID)
+
+					// Check if CVE JSON is already present before fetching/overwriting
+					if existing, ok := loadCachedCVE(cvesDir, v.CVEID); ok {
+						v = *existing
+					} else {
+						_ = saveCachedCVE(cvesDir, v)
+					}
+
+					if !seenCVEs[v.CVEID] {
+						seenCVEs[v.CVEID] = true
+						matchedVulns = append(matchedVulns, v)
+					}
+				}
+
+				queryIndex[query] = foundIDs
+				indexModified = true
+
+				// If we got good results from primary query (e.g. CPE), don't over-query
+				if len(matchedVulns) > 0 {
+					break
+				}
+			}
+		} else if len(matchedVulns) > 0 {
+			utils.LogInfo("Loaded %d cached CVE(s) from %s for port %d (%s)", len(matchedVulns), cvesDir, p.Port, p.Service)
 		}
 
 		if len(matchedVulns) > 0 {
@@ -264,13 +378,20 @@ portsLoop:
 		}
 	}
 
+	// Persist updated query index to cves/index.json
+	if indexModified {
+		if data, err := json.MarshalIndent(queryIndex, "", "  "); err == nil {
+			_ = os.WriteFile(indexFile, data, 0644)
+		}
+	}
+
 	report := VulnReport{
 		Target:   t.Target,
 		Verbose:  t.Verbose,
 		Services: services,
 	}
 
-	// Cache to file only if we found services and were not rate-limited
+	// Cache to target output file if we found services and were not rate-limited
 	if !rateLimited && len(services) > 0 {
 		if data, err := json.MarshalIndent(report, "", "  "); err == nil {
 			_ = os.WriteFile(reportFile, data, 0644)
