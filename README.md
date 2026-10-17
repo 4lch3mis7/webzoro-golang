@@ -19,7 +19,7 @@ go build -o webzoro main.go
 ## Usage
 
 ```bash
-# Scan a domain or IP
+# Scan a domain or IP (scans all 65,535 ports)
 ./webzoro <host>
 
 # Enable verbose mode

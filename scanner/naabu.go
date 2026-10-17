@@ -43,10 +43,21 @@ func Naabu(t *Target, outputFile string) NaabuOutput {
 	if !utils.FileExists(outputFile) {
 		options := runner.Options{
 			Host:     goflags.StringSlice{t.Target},
-			ScanType: "c", // Connect scan (unprivileged; doesn't require root)
-			Output:   outputFile,
-			JSON:     true,
-			Silent:   true,
+			ScanType: "c",    // Connect scan (unprivileged; no root required)
+			TopPorts: "full", // Scan all 65,535 ports (1-65535)
+
+			// Throughput: push rate higher, fewer threads is fine for connect scan
+			Rate:       3000, // packets/sec
+			Threads:    25,   // connect scan is I/O bound, not CPU bound
+			WarmUpTime: 1,    // seconds
+
+			// Reliability vs speed: 1 retry is enough; 1500ms timeout was the main bottleneck
+			Retries: 1,
+			Timeout: 700, // ms — sufficient for LAN/VPN; raise to 1500 for WAN targets
+
+			Output: outputFile,
+			JSON:   true,
+			Silent: true,
 			OnResult: func(hr *result.HostResult) {
 				if hr == nil {
 					return
