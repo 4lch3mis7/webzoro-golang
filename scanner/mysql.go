@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/4lch3mis7/webzoro-golang/utils"
 	"github.com/go-sql-driver/mysql"
 )
 
@@ -47,24 +48,22 @@ var capabilityTable = []struct {
 	{1 << 19, "SupportsAuthPlugins"},
 }
 
-var defaultMySQLCreds = []struct {
+var defaultMySQLUsernames = utils.ReadLinesRemote("https://raw.githubusercontent.com/danielmiessler/SecLists/refs/heads/master/Usernames/top-usernames-shortlist.txt")
+var defaultMySQLPasswords = utils.ReadLinesRemote("https://raw.githubusercontent.com/danielmiessler/SecLists/refs/heads/master/Passwords/Common-Credentials/top-20-common-SSH-passwords.txt")
+var defaultMySQLCreds []struct {
 	user string
 	pass string
-}{
-	{"root", ""},
-	{"root", "root"},
-	{"root", "admin"},
-	{"root", "123456"},
-	{"root", "12345678"},
-	{"root", "123456789"},
-	{"root", "password"},
-	{"root", "p@ssw0rd"},
-	{"root", "toor"},
-	{"root", "mysql"},
-	{"admin", ""},
-	{"admin", "admin"},
-	{"mysql", ""},
-	{"mysql", "mysql"},
+}
+
+func init() {
+	for _, u := range defaultMySQLUsernames {
+		for _, p := range defaultMySQLPasswords {
+			defaultMySQLCreds = append(defaultMySQLCreds, struct {
+				user string
+				pass string
+			}{u, p})
+		}
+	}
 }
 
 // MySQLAuditResult stores the security evaluation of a MySQL service (via native handshake).
@@ -420,4 +419,3 @@ func probeCredentials(host string, port int, username, password string) (bool, e
 	}
 	return false, err
 }
-
