@@ -15,9 +15,15 @@ var (
 )
 
 type Target struct {
-	Target     string
-	Subdomains []string
-	Verbose    bool
+	Target      string
+	Subdomains  []string
+	Verbose     bool
+	Credentials []struct {
+		Service  string
+		Port     int
+		Username string
+		Password string
+	}
 }
 
 // Returns `true` if the Target is either an IP address or a domain name

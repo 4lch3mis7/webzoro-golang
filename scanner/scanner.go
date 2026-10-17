@@ -60,6 +60,11 @@ func Run(t *Target) {
 		if strings.Contains(strings.ToLower(p.Service), "mysql") || p.Port == 3306 {
 			mysqlAudit := AuditMySQL(t, p)
 			fmt.Println(mysqlAudit)
+			// Enumerate MySQL if DefaultAccess is present
+			if strings.Contains(mysqlAudit.DefaultAccess, "CRITICAL") {
+				EnumerateMySQL(t)
+			}
+
 		}
 	}
 }

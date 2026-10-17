@@ -56,8 +56,14 @@ var defaultMySQLCreds []struct {
 }
 
 func init() {
+	passwords := append([]string{""}, defaultMySQLPasswords...)
 	for _, u := range defaultMySQLUsernames {
-		for _, p := range defaultMySQLPasswords {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			continue
+		}
+		for _, p := range passwords {
+			p = strings.TrimRight(p, "\r")
 			defaultMySQLCreds = append(defaultMySQLCreds, struct {
 				user string
 				pass string
@@ -174,6 +180,12 @@ func AuditMySQL(t *Target, p Port) MySQLAuditResult {
 				passLabel = fmt.Sprintf("'%s'", cred.pass)
 			}
 			result.DefaultAccess = fmt.Sprintf("[!] CRITICAL: Default credentials accepted ('%s':%s)!", cred.user, passLabel)
+			t.Credentials = append(t.Credentials, struct {
+				Service  string
+				Port     int
+				Username string
+				Password string
+			}{"mysql", p.Port, cred.user, cred.pass})
 			break
 		}
 		if err != nil {
@@ -210,6 +222,210 @@ func AuditMySQL(t *Target, p Port) MySQLAuditResult {
 		"Ensure bind-address = 127.0.0.1 in my.cnf if external database access is not required.")
 
 	return result
+}
+
+// EnumerateMySQL performs a comprehensive enumeration of MySQL schema, users, and privileges.
+func EnumerateMySQL(t *Target) {
+	var username, password string
+	port := 3306
+
+	for _, cred := range t.Credentials {
+		if cred.Service == "mysql" {
+			port = cred.Port
+			username = cred.Username
+			password = cred.Password
+			break
+		}
+	}
+
+	if username == "" {
+		fmt.Println("[-] No credentials found for MySQL server")
+		return
+	}
+
+	addr := net.JoinHostPort(t.Target, fmt.Sprintf("%d", port))
+	cfg := mysql.NewConfig()
+	cfg.User = username
+	cfg.Passwd = password
+	cfg.Net = "tcp"
+	cfg.Addr = addr
+	cfg.Timeout = 5 * time.Second
+	cfg.ReadTimeout = 5 * time.Second
+	cfg.WriteTimeout = 5 * time.Second
+	cfg.AllowNativePasswords = true
+
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil || db.Ping() != nil {
+		if db != nil {
+			db.Close()
+		}
+		cfg.AllowCleartextPasswords = true
+		cfg.TLSConfig = "skip-verify"
+		db, err = sql.Open("mysql", cfg.FormatDSN())
+		if err != nil {
+			fmt.Println("[-] Failed to open MySQL connection:", err)
+			return
+		}
+	}
+	defer db.Close()
+
+	db.SetConnMaxLifetime(5 * time.Second)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(0)
+
+	if err = db.Ping(); err != nil {
+		fmt.Println("[-] Failed to connect to MySQL server:", err)
+		return
+	}
+	fmt.Printf("\n[+] MySQL Enumeration (%s@%s):\n", username, addr)
+
+	// --- Databases ---
+	dbRows, err := db.Query("SHOW DATABASES")
+	if err != nil {
+		fmt.Println("    [-] Failed to list databases:", err)
+		return
+	}
+	var databases []string
+	for dbRows.Next() {
+		var name string
+		if err := dbRows.Scan(&name); err == nil {
+			databases = append(databases, name)
+		}
+	}
+	dbRows.Close()
+
+	fmt.Printf("    Databases (%d): %s\n", len(databases), strings.Join(databases, ", "))
+
+	// --- Tables per database (verbose only) ---
+	if t.Verbose {
+		for _, dbName := range databases {
+			tableRows, err := db.Query(
+				"SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS "+
+					"FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? "+
+					"ORDER BY TABLE_TYPE, TABLE_NAME", dbName)
+			if err != nil {
+				fmt.Printf("      [%s] tables: %v\n", dbName, err)
+				continue
+			}
+			var tables []string
+			for tableRows.Next() {
+				var tName, tType string
+				var tRows sql.NullInt64
+				if err := tableRows.Scan(&tName, &tType, &tRows); err == nil {
+					rowCount := "?"
+					if tRows.Valid {
+						rowCount = fmt.Sprintf("%d rows", tRows.Int64)
+					}
+					tables = append(tables, fmt.Sprintf("%s (%s, %s)", tName, tType, rowCount))
+				}
+			}
+			tableRows.Close()
+
+			if len(tables) == 0 {
+				fmt.Printf("      [%s] (empty)\n", dbName)
+			} else {
+				fmt.Printf("      [%s] %d table(s):\n", dbName, len(tables))
+				for _, tbl := range tables {
+					fmt.Printf("        - %s\n", tbl)
+				}
+			}
+		}
+	}
+
+	// --- Users ---
+	userRows, err := db.Query("SELECT user, host, plugin FROM mysql.user ORDER BY user, host")
+	if err != nil {
+		fmt.Println("    [-] Users: permission denied or unavailable")
+	} else {
+		defer userRows.Close()
+		fmt.Println("    Users:")
+		for userRows.Next() {
+			var user, host, plugin string
+			if err := userRows.Scan(&user, &host, &plugin); err == nil {
+				fmt.Printf("      - '%s'@'%s' [plugin: %s]\n", user, host, plugin)
+			}
+		}
+	}
+	var currentUser string
+	_ = db.QueryRow("SELECT CURRENT_USER()").Scan(&currentUser)
+	if currentUser != "" {
+		fmt.Printf("    Current User: %s\n", currentUser)
+	}
+
+	// --- Security-critical server variables ---
+	secVars := []string{
+		"bind_address",
+		"require_secure_transport",
+		"local_infile",
+		"persist_sensitive_variables_in_plaintext",
+		"default_authentication_plugin",
+	}
+	varQuery := fmt.Sprintf("SHOW VARIABLES WHERE Variable_name IN ('%s')", strings.Join(secVars, "', '"))
+	varRows, err := db.Query(varQuery)
+	if err != nil {
+		fmt.Printf("    [-] Security variables: %v\n", err)
+	} else {
+		defer varRows.Close()
+		fmt.Println("    Security Variables:")
+		for varRows.Next() {
+			var varName, varValue string
+			if err := varRows.Scan(&varName, &varValue); err == nil {
+				risk := secVarRisk(varName, varValue)
+				fmt.Printf("      %-42s = %-24s %s\n", varName, varValue, risk)
+			}
+		}
+	}
+
+	// --- Grants (verbose only) ---
+	if t.Verbose {
+		grantRows, err := db.Query("SHOW GRANTS")
+		if err == nil {
+			defer grantRows.Close()
+			fmt.Println("    Grants:")
+			for grantRows.Next() {
+				var grant string
+				if err := grantRows.Scan(&grant); err == nil {
+					fmt.Printf("      %s\n", grant)
+				}
+			}
+		}
+	}
+}
+
+// secVarRisk evaluates the security impact of a MySQL server variable value.
+func secVarRisk(name, val string) string {
+	valLower := strings.ToLower(val)
+	switch strings.ToLower(name) {
+	case "bind_address":
+		if val == "0.0.0.0" || val == "::" || val == "*" {
+			return "[!] CRITICAL: Listens on all interfaces (publicly accessible)"
+		} else if val == "127.0.0.1" || val == "::1" || valLower == "localhost" {
+			return "[SECURE] Bound to loopback interface only"
+		}
+		return fmt.Sprintf("[i] Bound to %s", val)
+	case "require_secure_transport":
+		if valLower == "on" || valLower == "1" {
+			return "[SECURE] Enforced (Plaintext connections rejected)"
+		}
+		return "[!] WARNING: Disabled (Plaintext credentials allowed)"
+	case "local_infile":
+		if valLower == "on" || valLower == "1" {
+			return "[!] WARNING: Enabled (Arbitrary client file read risk)"
+		}
+		return "[SECURE] Disabled"
+	case "persist_sensitive_variables_in_plaintext":
+		if valLower == "on" || valLower == "1" {
+			return "[!] WARNING: Sensitive variables persisted in plaintext on disk"
+		}
+		return "[SECURE] Disabled"
+	case "default_authentication_plugin":
+		if strings.Contains(valLower, "native_password") {
+			return "[!] WARNING: Legacy SHA-1 auth (vulnerable to offline cracking)"
+		} else if strings.Contains(valLower, "caching_sha2") {
+			return "[SECURE] SHA-256 caching auth"
+		}
+	}
+	return ""
 }
 
 // readMySQLPacket reads a single standard MySQL protocol packet.
