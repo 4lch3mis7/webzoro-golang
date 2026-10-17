@@ -55,9 +55,10 @@ func Naabu(t *Target, outputFile string) NaabuOutput {
 			Retries: 1,
 			Timeout: 700, // ms — sufficient for LAN/VPN; raise to 1500 for WAN targets
 
-			Output: outputFile,
-			JSON:   true,
-			Silent: true,
+			Output:        outputFile,
+			JSON:          true,
+			Silent:        true,
+			DisableStdout: true,
 			OnResult: func(hr *result.HostResult) {
 				if hr == nil {
 					return
