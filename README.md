@@ -37,3 +37,31 @@ Webzoro includes colorized status badges and severity indicators:
 
 Vulnerability severities (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) and exploit states (KEV / active PoCs) are highlighted automatically. The [`NO_COLOR`](https://no-color.org/) standard is respected.
 
+## HTTP Service Audit
+
+```
+                    ┌────────────────────────────────────────┐
+                    │          HTTP Service Audit            │
+                    └──────────────────┬─────────────────────┘
+                                       │
+        ┌──────────────────────────────┼──────────────────────────────┐
+        ▼                              ▼                              ▼
+ ┌──────────────┐              ┌──────────────┐               ┌──────────────┐
+ │ TLS & Conn   │              │ Security     │               │ HTTP Methods │
+ │ - HTTPS / TLS│              │ Headers      │               │ - OPTIONS    │
+ │ - Cert valid │              │ - HSTS, CSP  │               │ - Dangerous: │
+ │ - Expiration │              │ - X-Frame    │               │   PUT,TRACE  │
+ │ - Self-signed│              │ - Server leak│               │ - WebDAV     │
+ └──────────────┘              └──────────────┘               └──────────────┘
+        │                              │                              │
+        └──────────────────────────────┼──────────────────────────────┘
+                                       │
+        ┌──────────────────────────────┴──────────────────────────────┐
+        ▼                                                             ▼
+ ┌───────────────────────────┐                 ┌─────────────────────────────┐
+ │ CORS & Cookie Security    │                 │ High-Risk File Probing      │
+ │ - Reflected Origin & Creds│                 │ - robots.txt / sitemap      │
+ │ - Missing HttpOnly/Secure │                 │ - /.git/HEAD & /.env        │
+ │ - SameSite attributes     │                 │ - Swagger / API docs        │
+ └───────────────────────────┘                 └─────────────────────────────┘
+```

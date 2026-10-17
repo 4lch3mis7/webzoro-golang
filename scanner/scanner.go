@@ -55,7 +55,7 @@ func Run(t *Target) {
 		fmt.Println(vulnReport)
 	}
 
-	// Specialized service audits (e.g. MySQL security and default checks)
+	// Specialized service audits (e.g. MySQL, HTTP/HTTPS security checks)
 	for _, p := range results.Ports {
 		if strings.Contains(strings.ToLower(p.Service), "mysql") || p.Port == 3306 {
 			mysqlAudit := AuditMySQL(t, p)
@@ -64,9 +64,32 @@ func Run(t *Target) {
 			if strings.Contains(mysqlAudit.DefaultAccess, "CRITICAL") {
 				EnumerateMySQL(t)
 			}
+		}
 
+		if isHTTPService(p) {
+			httpAudit := AuditHTTP(t, p)
+			fmt.Println(httpAudit)
 		}
 	}
+}
+
+// isHTTPService checks if a port is likely running an HTTP or HTTPS service.
+func isHTTPService(p Port) bool {
+	svc := strings.ToLower(p.Service)
+	if strings.Contains(svc, "http") || strings.Contains(svc, "https") || svc == "ssl/http" || svc == "http-proxy" {
+		return true
+	}
+	switch p.Port {
+	case 80, 443, 8000, 8008, 8080, 8443, 8888, 9000, 9443:
+		return true
+	}
+	for _, cpe := range p.CPEs {
+		cpeLower := strings.ToLower(cpe)
+		if strings.Contains(cpeLower, "http") || strings.Contains(cpeLower, "apache") || strings.Contains(cpeLower, "nginx") || strings.Contains(cpeLower, "coyote") {
+			return true
+		}
+	}
+	return false
 }
 
 func Show(t *Target) {
