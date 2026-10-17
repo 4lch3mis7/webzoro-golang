@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -36,7 +37,7 @@ type HTTPAuditResult struct {
 	Recommendations []string `json:"recommendations,omitempty"`
 }
 
-var titleRegex = regexp.MustCompile(`(?i)<title[^>]*>(.*?)</title>`)
+var titleRegex = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
 func (r HTTPAuditResult) String() string {
 	var sb strings.Builder
@@ -69,8 +70,13 @@ func (r HTTPAuditResult) String() string {
 
 	if r.Title != "" {
 		sb.WriteString(fmt.Sprintf("    %-20s: %s\n",
-			utils.ColorBold.Sprint("Page Title"),
+			utils.ColorBold.Sprint("Title"),
 			utils.ColorHighlight.Sprint(r.Title),
+		))
+	} else {
+		sb.WriteString(fmt.Sprintf("    %-20s: %s\n",
+			utils.ColorBold.Sprint("Title"),
+			utils.ColorDim.Sprint("(No title)"),
 		))
 	}
 
@@ -213,10 +219,22 @@ func AuditHTTP(t *Target, p Port) HTTPAuditResult {
 	res.StatusCode = resp.StatusCode
 	res.StatusText = http.StatusText(resp.StatusCode)
 
-	// Extract Title from HTML body (first 32KB)
-	bodyPreview, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
+	// Extract Title from HTML body (first 64KB)
+	bodyPreview, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if matches := titleRegex.FindSubmatch(bodyPreview); len(matches) > 1 {
-		res.Title = strings.TrimSpace(string(matches[1]))
+		rawTitle := strings.TrimSpace(string(matches[1]))
+		rawTitle = html.UnescapeString(rawTitle)
+		res.Title = strings.Join(strings.Fields(rawTitle), " ")
+	}
+
+	// Fallback to Nmap http-title script output if HTML <title> was not present
+	if res.Title == "" {
+		for _, s := range p.Scripts {
+			if strings.EqualFold(s.ID, "http-title") && s.Output != "" {
+				res.Title = strings.TrimSpace(s.Output)
+				break
+			}
+		}
 	}
 
 	// Server banner & technology disclosures
