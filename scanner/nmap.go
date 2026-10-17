@@ -56,9 +56,19 @@ func (p Port) String() string {
 		state = "open"
 	}
 
-	res := fmt.Sprintf("%-9s %-7s %-10s", fmt.Sprintf("%d/%s", p.Port, proto), state, p.Service)
+	portPlain := fmt.Sprintf("%d/%s", p.Port, proto)
+	portPadded := fmt.Sprintf("%-9s", portPlain)
+	portColored := utils.ColorPortNum.Sprint(portPlain) + portPadded[len(portPlain):]
+
+	statePadded := fmt.Sprintf("%-7s", state)
+	stateColored := utils.ColorPortState(state) + statePadded[len(state):]
+
+	svcPadded := fmt.Sprintf("%-10s", p.Service)
+	svcColored := utils.ColorService.Sprint(p.Service) + svcPadded[len(p.Service):]
+
+	res := fmt.Sprintf("%s %s %s", portColored, stateColored, svcColored)
 	if version != "" {
-		res += " " + version
+		res += " " + utils.ColorVersion.Sprint(version)
 	}
 
 	for i, s := range p.Scripts {
@@ -67,16 +77,18 @@ func (p Port) String() string {
 		if i == len(p.Scripts)-1 {
 			prefix = "|_"
 		}
+		treePrefix := utils.ColorTree.Sprint(prefix)
+		scriptID := utils.ColorBold.Sprint(s.ID)
 		if len(lines) == 1 && lines[0] != "" {
-			res += fmt.Sprintf("\n%s %s: %s", prefix, s.ID, lines[0])
+			res += fmt.Sprintf("\n%s %s: %s", treePrefix, scriptID, lines[0])
 		} else {
-			res += fmt.Sprintf("\n| %s: ", s.ID)
+			res += fmt.Sprintf("\n%s %s: ", utils.ColorTree.Sprint("|"), scriptID)
 			for j, line := range lines {
 				subPrefix := "|"
 				if i == len(p.Scripts)-1 && j == len(lines)-1 {
 					subPrefix = "|_"
 				}
-				res += fmt.Sprintf("\n%s   %s", subPrefix, line)
+				res += fmt.Sprintf("\n%s   %s", utils.ColorTree.Sprint(subPrefix), line)
 			}
 		}
 	}
@@ -111,9 +123,13 @@ func (p Port) Summary() string {
 		state = "open"
 	}
 
-	res := fmt.Sprintf("%d/%s [%s] %s", p.Port, proto, state, p.Service)
+	res := fmt.Sprintf("%s [%s] %s",
+		utils.ColorPortNum.Sprintf("%d/%s", p.Port, proto),
+		utils.ColorPortState(state),
+		utils.ColorService.Sprint(p.Service),
+	)
 	if version != "" {
-		res += " - " + version
+		res += " - " + utils.ColorVersion.Sprint(version)
 	}
 	return res
 }
@@ -132,11 +148,11 @@ func (n NmapOutput) String() string {
 			return n.RawOutput
 		}
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Nmap scan report for %s", n.IPAddress))
+		sb.WriteString(utils.ColorHeader.Sprintf("Nmap scan report for %s", n.IPAddress))
 		if n.Hostname != "" {
-			sb.WriteString(fmt.Sprintf(" (%s)", n.Hostname))
+			sb.WriteString(utils.ColorHighlight.Sprintf(" (%s)", n.Hostname))
 		}
-		sb.WriteString("\nPORT      STATE   SERVICE    VERSION\n")
+		sb.WriteString("\n" + utils.ColorHeader.Sprint("PORT      STATE   SERVICE    VERSION") + "\n")
 		for _, p := range n.Ports {
 			sb.WriteString(p.String() + "\n")
 		}
@@ -156,8 +172,8 @@ func (n NmapOutput) Summary() string {
 			target = n.Hostname
 		}
 	}
-	sb.WriteString(fmt.Sprintf("Target: %s\n", target))
-	sb.WriteString(fmt.Sprintf("  Open Ports (%d):", len(n.Ports)))
+	sb.WriteString(fmt.Sprintf("%s: %s\n", utils.ColorBold.Sprint("Target"), utils.ColorHighlight.Sprint(target)))
+	sb.WriteString(fmt.Sprintf("  %s (%d):", utils.ColorHighlight.Sprint("Open Ports"), len(n.Ports)))
 	for _, p := range n.Ports {
 		sb.WriteString(fmt.Sprintf("\n    - %s", p.Summary()))
 	}
@@ -248,7 +264,7 @@ func ParseNmapXML(xmlData []byte) (NmapOutput, error) {
 
 // Run a nmap scan on the target (domain or IP)
 func Nmap(t *Target, outputFile string, ports ...string) NmapOutput {
-	fmt.Println("[*] Nmap scan started")
+	utils.LogAction("Nmap scan started")
 	xmlOutFile := path.Join(t.OutDir(), "nmap.xml")
 	stdOutFile := path.Join(t.OutDir(), "nmap.stdout")
 
@@ -272,7 +288,7 @@ func Nmap(t *Target, outputFile string, ports ...string) NmapOutput {
 			log.Fatal(err)
 		}
 	}
-	fmt.Println("[+] Nmap results:", stdOutFile)
+	utils.LogSuccess("Nmap results: %s", stdOutFile)
 
 	data, err := os.ReadFile(xmlOutFile)
 	if err != nil {

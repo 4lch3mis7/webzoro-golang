@@ -22,7 +22,7 @@ func EnumSubdomains(t *Target) {
 	if len(subdomains) > 0 {
 		path := t.OutDir() + "/subdomains.txt"
 		utils.SaveToFile(path, strings.Join(subdomains, "\n"))
-		fmt.Println("[i] Subdomains saved to", path)
+		utils.LogInfo("Subdomains saved to %s", path)
 	}
 
 	// Run Nuclei on the subdomains
@@ -47,7 +47,7 @@ func EnumSubdomains(t *Target) {
 func Run(t *Target) {
 	// Port scanning (Naabu) + Service and Version detection (Nmap)
 	results := NaabuWithServiceScan(t)
-	fmt.Println("[i] Scan results:\n", results)
+	utils.LogInfo("Scan results:\n%s", results)
 
 	// Vulnerability lookup on discovered open services using ProjectDiscovery vulnx
 	if len(results.Ports) > 0 {

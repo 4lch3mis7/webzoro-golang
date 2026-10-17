@@ -99,43 +99,43 @@ func (r MySQLAuditResult) String() string {
 	if r.Target == "" {
 		targetStr = fmt.Sprintf(" (Port %d)", r.Port)
 	}
-	sb.WriteString(fmt.Sprintf("\n[+] MySQL Native Service Audit%s:\n", targetStr))
+	sb.WriteString(fmt.Sprintf("\n%s %s%s:\n", utils.TagSuccess(), utils.ColorHeader.Sprint("MySQL Native Service Audit"), utils.ColorHighlight.Sprint(targetStr)))
 
 	if r.ServerVersion != "" {
-		sb.WriteString(fmt.Sprintf("    Server Version  : %s (Protocol v%d)\n", r.ServerVersion, r.ProtocolVersion))
+		sb.WriteString(fmt.Sprintf("    %-16s: %s (Protocol v%d)\n", utils.ColorBold.Sprint("Server Version"), utils.ColorHighlight.Sprint(r.ServerVersion), r.ProtocolVersion))
 	}
 	if r.ConnectionID > 0 {
-		sb.WriteString(fmt.Sprintf("    Connection ID   : %d\n", r.ConnectionID))
+		sb.WriteString(fmt.Sprintf("    %-16s: %d\n", utils.ColorBold.Sprint("Connection ID"), r.ConnectionID))
 	}
 	if r.AuthPlugin != "" {
-		sb.WriteString(fmt.Sprintf("    Auth Plugin     : %s\n", r.AuthPlugin))
+		sb.WriteString(fmt.Sprintf("    %-16s: %s\n", utils.ColorBold.Sprint("Auth Plugin"), utils.ColorVersion.Sprint(r.AuthPlugin)))
 	}
 	if r.StatusDesc != "" {
-		sb.WriteString(fmt.Sprintf("    Status Flags    : %s\n", r.StatusDesc))
+		sb.WriteString(fmt.Sprintf("    %-16s: %s\n", utils.ColorBold.Sprint("Status Flags"), r.StatusDesc))
 	}
 
-	sslStatus := "Disabled / Not Supported"
+	sslStatus := utils.ColorWarn.Sprint("Disabled / Not Supported")
 	if r.SSLSupported {
-		sslStatus = "Supported (SwitchToSSLAfterHandshake)"
+		sslStatus = utils.ColorSuccess.Sprint("Supported (SwitchToSSLAfterHandshake)")
 	}
-	sb.WriteString(fmt.Sprintf("    SSL/TLS Support : %s\n", sslStatus))
+	sb.WriteString(fmt.Sprintf("    %-16s: %s\n", utils.ColorBold.Sprint("SSL/TLS Support"), sslStatus))
 
 	if len(r.Capabilities) > 0 {
-		sb.WriteString(fmt.Sprintf("    Capabilities    : %s\n", strings.Join(r.Capabilities, ", ")))
+		sb.WriteString(fmt.Sprintf("    %-16s: %s\n", utils.ColorBold.Sprint("Capabilities"), strings.Join(r.Capabilities, ", ")))
 	}
 
 	if r.SaltHex != "" {
-		sb.WriteString(fmt.Sprintf("    Salt (Challenge): %s\n", r.SaltHex))
+		sb.WriteString(fmt.Sprintf("    %-16s: %s\n", utils.ColorBold.Sprint("Salt (Challenge)"), utils.ColorDim.Sprint(r.SaltHex)))
 	}
 
 	if r.DefaultAccess != "" {
-		sb.WriteString(fmt.Sprintf("    Default Access  : %s\n", r.DefaultAccess))
+		sb.WriteString(fmt.Sprintf("    %-16s: %s\n", utils.ColorBold.Sprint("Default Access"), utils.ColorRiskText(r.DefaultAccess)))
 	}
 
 	if len(r.Recommendations) > 0 {
-		sb.WriteString("    Remediation / Hardening:\n")
+		sb.WriteString(fmt.Sprintf("    %s\n", utils.ColorBold.Sprint("Remediation / Hardening:")))
 		for _, rec := range r.Recommendations {
-			sb.WriteString(fmt.Sprintf("      - %s\n", rec))
+			sb.WriteString(fmt.Sprintf("      - %s\n", utils.ColorRiskText(rec)))
 		}
 	}
 
@@ -239,7 +239,7 @@ func EnumerateMySQL(t *Target) {
 	}
 
 	if username == "" {
-		fmt.Println("[-] No credentials found for MySQL server")
+		utils.LogError("No credentials found for MySQL server")
 		return
 	}
 
@@ -263,7 +263,7 @@ func EnumerateMySQL(t *Target) {
 		cfg.TLSConfig = "skip-verify"
 		db, err = sql.Open("mysql", cfg.FormatDSN())
 		if err != nil {
-			fmt.Println("[-] Failed to open MySQL connection:", err)
+			utils.LogError("Failed to open MySQL connection: %v", err)
 			return
 		}
 	}
@@ -274,15 +274,15 @@ func EnumerateMySQL(t *Target) {
 	db.SetMaxIdleConns(0)
 
 	if err = db.Ping(); err != nil {
-		fmt.Println("[-] Failed to connect to MySQL server:", err)
+		utils.LogError("Failed to connect to MySQL server: %v", err)
 		return
 	}
-	fmt.Printf("\n[+] MySQL Enumeration (%s@%s):\n", username, addr)
+	fmt.Printf("\n%s %s (%s@%s):\n", utils.TagSuccess(), utils.ColorHeader.Sprint("MySQL Enumeration"), utils.ColorHighlight.Sprint(username), utils.ColorPortNum.Sprint(addr))
 
 	// --- Databases ---
 	dbRows, err := db.Query("SHOW DATABASES")
 	if err != nil {
-		fmt.Println("    [-] Failed to list databases:", err)
+		fmt.Printf("    %s Failed to list databases: %v\n", utils.TagError(), err)
 		return
 	}
 	var databases []string
@@ -294,7 +294,7 @@ func EnumerateMySQL(t *Target) {
 	}
 	dbRows.Close()
 
-	fmt.Printf("    Databases (%d): %s\n", len(databases), strings.Join(databases, ", "))
+	fmt.Printf("    %s (%d): %s\n", utils.ColorBold.Sprint("Databases"), len(databases), strings.Join(databases, ", "))
 
 	// --- Tables per database (verbose only) ---
 	if t.Verbose {
@@ -304,7 +304,7 @@ func EnumerateMySQL(t *Target) {
 					"FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? "+
 					"ORDER BY TABLE_TYPE, TABLE_NAME", dbName)
 			if err != nil {
-				fmt.Printf("      [%s] tables: %v\n", dbName, err)
+				fmt.Printf("      [%s] tables: %v\n", utils.ColorInfo.Sprint(dbName), err)
 				continue
 			}
 			var tables []string
@@ -322,9 +322,9 @@ func EnumerateMySQL(t *Target) {
 			tableRows.Close()
 
 			if len(tables) == 0 {
-				fmt.Printf("      [%s] (empty)\n", dbName)
+				fmt.Printf("      [%s] (empty)\n", utils.ColorInfo.Sprint(dbName))
 			} else {
-				fmt.Printf("      [%s] %d table(s):\n", dbName, len(tables))
+				fmt.Printf("      [%s] %d table(s):\n", utils.ColorInfo.Sprint(dbName), len(tables))
 				for _, tbl := range tables {
 					fmt.Printf("        - %s\n", tbl)
 				}
@@ -335,21 +335,21 @@ func EnumerateMySQL(t *Target) {
 	// --- Users ---
 	userRows, err := db.Query("SELECT user, host, plugin FROM mysql.user ORDER BY user, host")
 	if err != nil {
-		fmt.Println("    [-] Users: permission denied or unavailable")
+		fmt.Printf("    %s Users: permission denied or unavailable\n", utils.TagError())
 	} else {
 		defer userRows.Close()
-		fmt.Println("    Users:")
+		fmt.Printf("    %s\n", utils.ColorBold.Sprint("Users:"))
 		for userRows.Next() {
 			var user, host, plugin string
 			if err := userRows.Scan(&user, &host, &plugin); err == nil {
-				fmt.Printf("      - '%s'@'%s' [plugin: %s]\n", user, host, plugin)
+				fmt.Printf("      - '%s'@'%s' [plugin: %s]\n", utils.ColorHighlight.Sprint(user), host, utils.ColorVersion.Sprint(plugin))
 			}
 		}
 	}
 	var currentUser string
 	_ = db.QueryRow("SELECT CURRENT_USER()").Scan(&currentUser)
 	if currentUser != "" {
-		fmt.Printf("    Current User: %s\n", currentUser)
+		fmt.Printf("    %s: %s\n", utils.ColorBold.Sprint("Current User"), utils.ColorHighlight.Sprint(currentUser))
 	}
 
 	// --- Security-critical server variables ---
@@ -363,15 +363,15 @@ func EnumerateMySQL(t *Target) {
 	varQuery := fmt.Sprintf("SHOW VARIABLES WHERE Variable_name IN ('%s')", strings.Join(secVars, "', '"))
 	varRows, err := db.Query(varQuery)
 	if err != nil {
-		fmt.Printf("    [-] Security variables: %v\n", err)
+		fmt.Printf("    %s Security variables: %v\n", utils.TagError(), err)
 	} else {
 		defer varRows.Close()
-		fmt.Println("    Security Variables:")
+		fmt.Printf("    %s\n", utils.ColorBold.Sprint("Security Variables:"))
 		for varRows.Next() {
 			var varName, varValue string
 			if err := varRows.Scan(&varName, &varValue); err == nil {
 				risk := secVarRisk(varName, varValue)
-				fmt.Printf("      %-42s = %-24s %s\n", varName, varValue, risk)
+				fmt.Printf("      %-42s = %-24s %s\n", utils.ColorService.Sprint(varName), varValue, utils.ColorRiskText(risk))
 			}
 		}
 	}
@@ -381,7 +381,7 @@ func EnumerateMySQL(t *Target) {
 		grantRows, err := db.Query("SHOW GRANTS")
 		if err == nil {
 			defer grantRows.Close()
-			fmt.Println("    Grants:")
+			fmt.Printf("    %s\n", utils.ColorBold.Sprint("Grants:"))
 			for grantRows.Next() {
 				var grant string
 				if err := grantRows.Scan(&grant); err == nil {

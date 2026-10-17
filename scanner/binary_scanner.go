@@ -1,7 +1,6 @@
 package scanner
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -13,42 +12,42 @@ import (
 
 // Enumerate subdomains using subfinder
 func Subfinder(domain, outputFile string) []string {
-	log.Println("[i] Enumerating subdomains from Subfinder")
+	utils.LogInfo("Enumerating subdomains from Subfinder")
 	os.Create(outputFile)
 	cmd := exec.Command("subfinder", "-d", domain, "-o", outputFile)
 	if _, err := cmd.CombinedOutput(); err != nil {
 		log.Fatal(err)
 	}
-	log.Println("[i] Subdomains enumerated via Subfinder")
+	utils.LogInfo("Subdomains enumerated via Subfinder")
 	return utils.ReadLines(outputFile)
 }
 
 // Run a nuclei scan on the target.
 func Nuclei(target, outputFile string) []string {
-	fmt.Println("[*] Running Nuclei scan")
+	utils.LogAction("Running Nuclei scan")
 	os.Create(outputFile)
 	cmd := exec.Command("nuclei", "-as", "-silent", "-target", target, "-o", outputFile)
 	if _, err := cmd.CombinedOutput(); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("[+] Nuclei scan results:", outputFile)
+	utils.LogSuccess("Nuclei scan results: %s", outputFile)
 	return utils.ReadLines(outputFile)
 }
 
 // Enumerate web directories for the target URL using `dirsearch`
 func Dirsearch(targetUrl, outputFile string) {
-	fmt.Println("[*] Enumerating directories via dirsearch")
+	utils.LogAction("Enumerating directories via dirsearch")
 	os.Create(outputFile)
 	cmd := exec.Command("dirsearch", "-F", "-u", targetUrl, "-o", outputFile)
 	if _, err := cmd.CombinedOutput(); err == nil {
 		log.Fatal(err)
 	}
-	fmt.Println("[+] Dirsearch result:", outputFile)
+	utils.LogSuccess("Dirsearch result: %s", outputFile)
 }
 
 // Enumerate web directories for the target URL using `ffuf`
 func FFUF(targetUrl, outputFile string) {
-	fmt.Println("[+] Enumerating directories via FFUF")
+	utils.LogAction("Enumerating directories via FFUF")
 
 	os.Create(outputFile)
 	wordsFile, _ := os.Create(os.TempDir() + "/combined_words.txt")
@@ -68,5 +67,5 @@ func FFUF(targetUrl, outputFile string) {
 	if _, err := cmd.CombinedOutput(); err == nil {
 		log.Fatal(err)
 	}
-	fmt.Println("[+] FFUF result:", outputFile)
+	utils.LogSuccess("FFUF result: %s", outputFile)
 }

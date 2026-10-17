@@ -3,7 +3,6 @@ package scanner
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"path"
 	"strconv"
@@ -29,7 +28,7 @@ type naabuRecord struct {
 
 // Run a naabu scan natively using the Naabu Go runner
 func Naabu(t *Target, outputFile string) NaabuOutput {
-	fmt.Println("[*] Naabu scan started")
+	utils.LogAction("Naabu scan started")
 	if outputFile == "" {
 		outputFile = path.Join(t.OutDir(), "naabu.json")
 	} else if !strings.Contains(outputFile, "/") {
@@ -102,7 +101,7 @@ func Naabu(t *Target, outputFile string) NaabuOutput {
 		}
 	}
 
-	fmt.Println("[+] Naabu results:", outputFile)
+	utils.LogSuccess("Naabu results: %s", outputFile)
 
 	if output.IP == "" && t.IsIP() {
 		output.IP = t.Target

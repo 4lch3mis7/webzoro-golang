@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"os/exec"
 
 	"github.com/4lch3mis7/webzoro-golang/scanner"
+	"github.com/4lch3mis7/webzoro-golang/utils"
 	"github.com/alecthomas/kingpin/v2"
 )
 
@@ -38,11 +38,11 @@ func main() {
 
 	missing := CheckDependencies()
 	if len(missing) > 0 {
-		fmt.Printf("[!] Missing dependencies (%d): %s\n", len(missing), missing)
+		utils.LogWarn("Missing dependencies (%d): %v", len(missing), missing)
 		return
 	}
 
-	fmt.Println("[*] All dependencies installed")
+	utils.LogAction("All dependencies installed")
 
 	target := scanner.Target{
 		Target:  *host,
@@ -50,7 +50,7 @@ func main() {
 	}
 
 	if !target.IsValidHost() {
-		fmt.Println("[!] Invalid host. Please provide a domain name or an IP Address")
+		utils.LogWarn("Invalid host. Please provide a domain name or an IP Address")
 		return
 	}
 
