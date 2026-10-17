@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -113,7 +114,31 @@ func Naabu(t *Target, outputFile string) NaabuOutput {
 		}
 	}
 
+	// Deduplicate and sort open ports
+	portMap := make(map[int]bool)
+	var uniquePorts []int
+	for _, p := range output.Ports {
+		if !portMap[p] && p > 0 {
+			portMap[p] = true
+			uniquePorts = append(uniquePorts, p)
+		}
+	}
+	sort.Ints(uniquePorts)
+	output.Ports = uniquePorts
+
 	utils.LogSuccess("Naabu results: %s", outputFile)
+	if len(output.Ports) > 0 {
+		var portStrs []string
+		for _, p := range output.Ports {
+			portStrs = append(portStrs, utils.ColorPortNum.Sprintf("%d", p))
+		}
+		utils.LogSuccess("Open ports (%s): %s",
+			utils.ColorHighlight.Sprintf("%d", len(output.Ports)),
+			strings.Join(portStrs, ", "),
+		)
+	} else {
+		utils.LogWarn("No open ports found on %s", output.Host)
+	}
 
 	if output.IP == "" && t.IsIP() {
 		output.IP = t.Target
