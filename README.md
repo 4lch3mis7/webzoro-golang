@@ -24,6 +24,9 @@ go build -o webzoro main.go
 
 # Enable verbose mode
 ./webzoro <host> -v
+
+# Actively verify candidate parameters against dynamic endpoints
+./webzoro <host> --verify-params
 ```
 
 ## Terminal Colors
@@ -107,6 +110,8 @@ Vulnerability severities (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) and exploit state
      [Target Artifacts in .local/<target>/]
        - params.txt           (Raw deduplicated parameters)
        - params_inferred.txt  (Target-specific inferred wordlist for fuzzing)
+       - params_verified.json (Confirmed parameters with reflection/delta signals)
+       - params_verified.txt  (Ready-to-fuzz verified URLs)
        - idor_candidates.json (Structured endpoints with entities and candidate params)
        - idor_candidates.txt  (Ready-to-fuzz URLs: /api/users?user_id=FUZZ)
        - auth_workflows.json  (Discovered auth & recovery workflows with passive smells)

@@ -15,10 +15,11 @@ var (
 )
 
 type Target struct {
-	Target      string
-	Subdomains  []string
-	Verbose     bool
-	Credentials []struct {
+	Target       string
+	Subdomains   []string
+	Verbose      bool
+	VerifyParams bool
+	Credentials  []struct {
 		Service  string
 		Port     int
 		Username string

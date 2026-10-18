@@ -49,6 +49,7 @@ type ExtractedAssets struct {
 	Links          []string           `json:"links"`
 	Parameters     []string           `json:"parameters"`
 	InferredParams []string           `json:"inferred_parameters"`
+	VerifiedParams []VerifiedParam    `json:"verified_parameters,omitempty"`
 	IDORCandidates []IDORCandidate    `json:"idor_candidates"`
 	JSFiles        []string           `json:"js_files"`
 	AuthSurfaces   []AuthSurface      `json:"auth_surfaces,omitempty"`
@@ -1261,6 +1262,12 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 		JSReports:      jsReports,
 	}
 
+	// Active parameter verification (if --verify-params is enabled)
+	if t.VerifyParams && (len(assets.InferredParams) > 0 || len(assets.Parameters) > 0) {
+		utils.LogAction("Actively verifying candidate parameters against dynamic endpoints...")
+		assets.VerifiedParams = VerifyParameters(t, port, baseURLStr, assets)
+	}
+
 	// 4. Persist lists to target output directory
 	linksFile := filepath.Join(t.OutDir(), "links.txt")
 	paramsFile := filepath.Join(t.OutDir(), "params.txt")
@@ -1379,6 +1386,30 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 				utils.ColorDim.Sprint(paramsInferredFile),
 			)
 		}
+	}
+	if t.VerifyParams {
+		verifiedJSONFile := filepath.Join(t.OutDir(), "params_verified.json")
+		if len(assets.VerifiedParams) > 0 {
+			fmt.Printf("      - %-20s: %s true positive parameter(s) confirmed -> %s\n",
+				utils.ColorSuccess.Sprint("Verified Params"),
+				utils.ColorHighlight.Sprintf("%d", len(assets.VerifiedParams)),
+				utils.ColorDim.Sprint(verifiedJSONFile),
+			)
+			for _, v := range assets.VerifiedParams {
+				fmt.Printf("        • %s -> [%s] (%s)\n",
+					utils.ColorBold.Sprint(v.Endpoint),
+					utils.ColorHighlight.Sprint(v.Param),
+					utils.ColorVersion.Sprint(v.Description),
+				)
+			}
+		} else {
+			fmt.Printf("      - %-20s: %s\n",
+				utils.ColorWarn.Sprint("Verified Params"),
+				utils.ColorDim.Sprint("0 parameters responded differently than baseline"),
+			)
+		}
+	} else if len(assets.InferredParams) > 0 {
+		fmt.Printf("        %s\n", utils.ColorDim.Sprint("[Tip: Run with --verify-params to actively test inferred parameters on endpoints]"))
 	}
 	if len(assets.IDORCandidates) > 0 {
 		fmt.Printf("      - %-20s: %s potential IDOR endpoint(s) flagged -> %s\n",
