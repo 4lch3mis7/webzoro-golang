@@ -77,6 +77,7 @@ Vulnerability severities (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) and exploit state
 | **Modern JS Route Literals** (`` fetch(`/api/user/${userId}`) ``, `axios.get('/doc/' + id)`) | SPA frontend dynamically injects variables into URLs. | **JS Template & Concatenation Parser**: Parses backtick template literals (`` `/route/${var}` ``) and concatenation patterns (`'/path/' + id`), extracting `userId` and `id` as direct parameters. |
 | **Hidden Form Inputs** (`<input type="hidden" name="account_id" value="105">`) | Backend passes state or authorization contexts client-side. | **High-Value Input Tagging**: Prioritizes hidden inputs and tags them as high-confidence IDOR/privilege candidates. |
 | **High-Risk Parameter Names** (`user_id`, `role`, `tenant_id`, `order_no`, `account`) | Parameters that directly control object reference or privilege level. | **Parameter Classification & IDOR Candidate Tagging**: Categorizes parameters into `Object Reference (IDOR)`, `Privilege / Role`, and `Resource / File Path`. |
+| **Auth & Password Recovery Flows** (`/forgot-password`, `/reset?token=...`, `res.token`) | Authentication and recovery endpoints with client-side token reads, pre-seeded hidden fields, or leaked URL tokens. | **Dedicated Passive Auth Analyzer**: Maps login, registration, and password reset flows; flags missing CSRF tokens, pre-seeded OTP/tokens in hidden inputs, active URL reset tokens, and client-side JS inspecting response tokens. |
 
 ---
 
@@ -87,19 +88,20 @@ Vulnerability severities (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) and exploit state
 │   Collected Assets (Probed Hits, HTML Responses, JS)   │
 └───────────────────────────┬────────────────────────────┘
                             │
-       ┌────────────────────┼────────────────────┐
-       ▼                    ▼                    ▼
-[REST & Path Analyzer]  [JS Template/AST]    [HTML Hidden Form]
-  - Numeric IDs (/42)     - `${userId}`        - type="hidden"
-  - UUIDs / Hex Hashes    - '/api/' + id       - JSON payload keys
-  - Entity Nouns          - axios / fetch      - Data attributes
-       │                    │                    │
-       └────────────────────┼────────────────────┘
+       ┌────────────────────┼────────────────────┬────────────────────┐
+       ▼                    ▼                    ▼                    ▼
+[REST & Path Analyzer]  [JS Template/AST]    [HTML Hidden Form]   [Passive Auth Engine]
+  - Numeric IDs (/42)     - `${userId}`        - type="hidden"      - Reset & Login Forms
+  - UUIDs / Hex Hashes    - '/api/' + id       - JSON payload keys  - Pre-seeded OTP/tokens
+  - Entity Nouns          - axios / fetch      - Data attributes    - Client JS token leaks
+       │                    │                    │                    │
+       └────────────────────┼────────────────────┴────────────────────┘
                             ▼
-     [Semantic Parameter Inference & IDOR Classifier]
+     [Semantic Parameter Inference & Vulnerability Profiler]
        1. Maps entities to permutations: {noun}_id, {noun}Id, id, {noun}_no
        2. Maps action verbs: download -> file, path, filename, doc_id
        3. Flags direct object references (IDOR Candidates)
+       4. Profiles Auth & Recovery workflows and flags passive smells
                             │
                             ▼
      [Target Artifacts in .local/<target>/]
@@ -107,4 +109,5 @@ Vulnerability severities (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) and exploit state
        - params_inferred.txt  (Target-specific inferred wordlist for fuzzing)
        - idor_candidates.json (Structured endpoints with entities and candidate params)
        - idor_candidates.txt  (Ready-to-fuzz URLs: /api/users?user_id=FUZZ)
+       - auth_workflows.json  (Discovered auth & recovery workflows with passive smells)
 ```

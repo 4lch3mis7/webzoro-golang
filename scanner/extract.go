@@ -40,6 +40,7 @@ type ExtractedAssets struct {
 	InferredParams []string        `json:"inferred_parameters"`
 	IDORCandidates []IDORCandidate `json:"idor_candidates"`
 	JSFiles        []string        `json:"js_files"`
+	AuthSurfaces   []AuthSurface   `json:"auth_surfaces,omitempty"`
 }
 
 var (
@@ -792,6 +793,7 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 
 	var idorCandidates []IDORCandidate
 	seenIDOR := make(map[string]bool)
+	var allAuthSurfaces []AuthSurface
 
 	addIDOR := func(c IDORCandidate) {
 		key := fmt.Sprintf("%s|%s|%s", c.URL, c.Source, c.DetectedID)
@@ -883,6 +885,9 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 		for _, cand := range ExtractFormIDORCandidates(body, uParsed) {
 			addIDOR(cand)
 		}
+
+		// Passively extract auth surfaces and recovery workflows from HTML
+		allAuthSurfaces = append(allAuthSurfaces, ExtractAuthFromHTML(body, uParsed)...)
 	}
 
 	// 2. Download and analyze discovered JavaScript files
@@ -987,6 +992,9 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 			for _, cand := range ExtractJSTemplateIDORCandidates(jsBody, baseU) {
 				addIDOR(cand)
 			}
+
+			// Passively analyze JS code for auth endpoints, token leaks, and client-side logic
+			allAuthSurfaces = append(allAuthSurfaces, AnalyzeAuthFromJS(jsBody, jsURL, baseU)...)
 		}
 	}
 
@@ -1007,6 +1015,9 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 		}
 	}
 
+	// Detect any leaked active/static reset tokens in discovered links
+	allAuthSurfaces = append(allAuthSurfaces, DetectLeakedResetLinks(setToSlice(masterLinks))...)
+
 	assets := ExtractedAssets{
 		TargetURL:      baseURLStr,
 		Port:           port,
@@ -1015,6 +1026,7 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 		InferredParams: setToSlice(masterInferred),
 		IDORCandidates: idorCandidates,
 		JSFiles:        setToSlice(masterJS),
+		AuthSurfaces:   DeduplicateAuthSurfaces(allAuthSurfaces),
 	}
 
 	// 4. Persist lists to target output directory
@@ -1037,6 +1049,12 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 	}
 	if len(assets.JSFiles) > 0 {
 		_ = os.WriteFile(jsFile, []byte(strings.Join(assets.JSFiles, "\n")+"\n"), 0644)
+	}
+	authJSONFile := filepath.Join(t.OutDir(), "auth_workflows.json")
+	if len(assets.AuthSurfaces) > 0 {
+		if data, err := json.MarshalIndent(assets.AuthSurfaces, "", "  "); err == nil {
+			_ = os.WriteFile(authJSONFile, data, 0644)
+		}
 	}
 	if len(assets.IDORCandidates) > 0 {
 		if data, err := json.MarshalIndent(assets.IDORCandidates, "", "  "); err == nil {
@@ -1120,6 +1138,38 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 				utils.ColorVersion.Sprint(c.DetectedID),
 				utils.ColorDim.Sprint(strings.Join(c.CandidateParams, ", ")),
 			)
+		}
+	}
+	if len(assets.AuthSurfaces) > 0 {
+		fmt.Printf("      - %-20s: %s auth/recovery workflow(s) mapped -> %s\n",
+			utils.ColorWarn.Sprint("Auth Workflows"),
+			utils.ColorHighlight.Sprintf("%d", len(assets.AuthSurfaces)),
+			utils.ColorDim.Sprint(authJSONFile),
+		)
+		maxPreview := 3
+		if len(assets.AuthSurfaces) < maxPreview {
+			maxPreview = len(assets.AuthSurfaces)
+		}
+		for i := 0; i < maxPreview; i++ {
+			s := assets.AuthSurfaces[i]
+			tag := "[" + strings.ToUpper(string(s.Type)) + "]"
+			inputsStr := strings.Join(s.Inputs, ", ")
+			if inputsStr != "" {
+				inputsStr = " [inputs: " + inputsStr + "]"
+			}
+			fmt.Printf("        %s %s %s%s\n",
+				utils.ColorHeader.Sprint(tag),
+				utils.ColorVersion.Sprint(s.Method),
+				utils.ColorBold.Sprint(s.URL),
+				utils.ColorDim.Sprint(inputsStr),
+			)
+			for _, smell := range s.Smells {
+				sevBadge := utils.ColorSeverity(string(smell.Severity))
+				fmt.Printf("          ! %s %s\n", sevBadge, smell.Description)
+				if smell.Evidence != "" {
+					fmt.Printf("            %s %s\n", utils.ColorDim.Sprint("Evidence:"), utils.ColorVersion.Sprint(smell.Evidence))
+				}
+			}
 		}
 	}
 	if len(assets.JSFiles) > 0 {
