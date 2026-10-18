@@ -37,13 +37,6 @@ func SelectDynamicEndpoints(links []string, baseU *url.URL) []string {
 	seen := make(map[string]bool)
 	var endpoints []string
 
-	staticExts := map[string]bool{
-		".css": true, ".js": true, ".png": true, ".jpg": true, ".jpeg": true,
-		".gif": true, ".svg": true, ".ico": true, ".woff": true, ".woff2": true,
-		".ttf": true, ".eot": true, ".map": true, ".txt": true, ".pdf": true,
-		".zip": true, ".tar": true, ".gz": true, ".xml": true, ".mp4": true,
-	}
-
 	for _, l := range links {
 		u, err := url.Parse(l)
 		if err != nil {
@@ -57,7 +50,7 @@ func SelectDynamicEndpoints(links []string, baseU *url.URL) []string {
 
 		cleanPath := strings.ToLower(u.Path)
 		ext := filepath.Ext(cleanPath)
-		if staticExts[ext] {
+		if StaticFileExtensions[ext] {
 			continue
 		}
 

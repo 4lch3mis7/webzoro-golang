@@ -85,44 +85,6 @@ var (
 	uuidPathRegex     = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	hashSlugPathRegex = regexp.MustCompile(`(?i)^([a-z]{2,8}[_-][a-z0-9_-]{3,32}|[0-9a-f]{16,64})$`)
 
-	// Semantic Knowledge Base: Common web application entities and action verbs
-	knownEntities = map[string]bool{
-		"user": true, "account": true, "profile": true, "member": true, "customer": true, "client": true,
-		"order": true, "cart": true, "item": true, "product": true, "transaction": true, "payment": true, "bill": true, "invoice": true, "receipt": true,
-		"document": true, "doc": true, "file": true, "attachment": true, "report": true, "upload": true, "image": true, "photo": true, "video": true,
-		"ticket": true, "message": true, "chat": true, "comment": true, "post": true, "article": true, "thread": true,
-		"tenant": true, "org": true, "organization": true, "company": true, "team": true, "group": true, "role": true, "project": true, "workspace": true,
-		"subscription": true, "plan": true, "contract": true, "booking": true, "reservation": true,
-		"patient": true, "claim": true, "policy": true, "token": true, "session": true, "device": true, "lead": true,
-	}
-
-	knownVerbs = map[string][]string{
-		"download": {"file", "path", "filename", "doc_id", "attachment_id", "id"},
-		"export":   {"file", "format", "type", "id", "report_id"},
-		"view":     {"id", "item_id", "view", "ref"},
-		"show":     {"id", "ref", "view"},
-		"read":     {"id", "doc_id"},
-		"fetch":    {"id", "key", "ref"},
-		"get":      {"id", "ref"},
-		"edit":     {"id", "item_id", "target"},
-		"update":   {"id", "item_id"},
-		"delete":   {"id", "item_id", "target", "uid"},
-		"remove":   {"id", "item_id"},
-		"cancel":   {"id", "order_id", "txn_id"},
-		"search":   {"q", "query", "search", "keyword", "term", "filter", "by"},
-		"find":     {"q", "query", "keyword", "term"},
-		"filter":   {"filter", "by", "category", "status", "type"},
-		"list":     {"page", "limit", "offset", "sort", "order", "status"},
-		"redirect": {"url", "redirect", "redirect_url", "return_url", "next", "dest"},
-		"forward":  {"url", "dest", "to"},
-		"goto":     {"url", "target", "next"},
-		"return":   {"return_url", "url", "next"},
-		"auth":     {"token", "code", "key", "user_id", "session_id", "auth"},
-		"verify":   {"token", "code", "key", "id", "hash"},
-		"reset":    {"token", "code", "key", "email", "id"},
-		"login":    {"username", "user", "email", "password", "redirect"},
-		"register": {"username", "user", "email", "role", "plan"},
-	}
 )
 
 // SanitizeFilename cleans paths to create safe filesystem filenames.
@@ -484,8 +446,7 @@ func ExtractFormIDORCandidates(body []byte, baseURL *url.URL) []IDORCandidate {
 // isStaticAssetPath returns true if a path points to static or media assets rather than API resources.
 func isStaticAssetPath(p string) bool {
 	pLower := strings.ToLower(p)
-	staticDirs := []string{"/css/", "/js/", "/images/", "/image/", "/img/", "/fonts/", "/font/", "/assets/", "/static/", "/dist/", "/vendor/", "/locales/", "/media/"}
-	for _, d := range staticDirs {
+	for _, d := range StaticAssetDirs {
 		if strings.HasPrefix(pLower, d) || strings.Contains(pLower, d) {
 			return true
 		}
@@ -740,13 +701,7 @@ func ExtractFromHTML(body []byte, baseURL *url.URL) ([]string, []string, []strin
 // isVendorJSLibrary detects third-party UI/utility libraries that should not have their internal object keys mined.
 func isVendorJSLibrary(filenameOrURL string) bool {
 	lower := strings.ToLower(filenameOrURL)
-	vendors := []string{
-		"bootstrap", "jquery", "popper", "react", "vue", "angular",
-		"lodash", "moment", "fontawesome", "swiper", "select2",
-		"chart.min.js", "chart.js", "core-js", "polyfill", "modernizr",
-		"materialize", "semantic", "foundation", "uikit", "alpine",
-	}
-	for _, v := range vendors {
+	for _, v := range VendorJSLibraries {
 		if strings.Contains(lower, v) {
 			return true
 		}
