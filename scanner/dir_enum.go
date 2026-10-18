@@ -17,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,14 +27,17 @@ import (
 
 // DirHit represents an individual path discovered during directory enumeration.
 type DirHit struct {
-	Path        string `json:"path"`
-	URL         string `json:"url"`
-	StatusCode  int    `json:"status_code"`
-	StatusText  string `json:"status_text,omitempty"`
-	ContentLen  int64  `json:"content_length"`
-	Title       string `json:"title,omitempty"`
-	RedirectURL string `json:"redirect_url,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
+	Path        string   `json:"path"`
+	URL         string   `json:"url"`
+	StatusCode  int      `json:"status_code"`
+	StatusText  string   `json:"status_text,omitempty"`
+	ContentLen  int64    `json:"content_length"`
+	Title       string   `json:"title,omitempty"`
+	RedirectURL string   `json:"redirect_url,omitempty"`
+	ContentType string   `json:"content_type,omitempty"`
+	Links       []string `json:"links,omitempty"`
+	Params      []string `json:"params,omitempty"`
+	JSFiles     []string `json:"js_files,omitempty"`
 }
 
 // DirEnumResult contains all findings from the directory enumeration scan.
@@ -205,6 +209,11 @@ func runDirEnum(targetURL string, outputFile string, words []string, scanType st
 	// Auto-Calibrate for Soft-404 detection
 	calibrated404 := calibrateSoft404(client, targetURL)
 
+	var responsesDir string
+	if outputFile != "" {
+		responsesDir = filepath.Join(filepath.Dir(outputFile), "responses")
+	}
+
 	// Worker Pool Execution
 	concurrency := 25
 	jobs := make(chan string, len(words))
@@ -216,7 +225,7 @@ func runDirEnum(targetURL string, outputFile string, words []string, scanType st
 		go func() {
 			defer wg.Done()
 			for w := range jobs {
-				if hit, ok := probePath(client, targetURL, w, calibrated404); ok {
+				if hit, ok := probePath(client, targetURL, w, calibrated404, responsesDir); ok {
 					resultsChan <- hit
 				}
 			}
@@ -316,7 +325,7 @@ func calibrateSoft404(client *http.Client, baseURL string) soft404Signature {
 }
 
 // probePath sends a request to a single endpoint and checks for a valid hit.
-func probePath(client *http.Client, baseURL, word string, cal soft404Signature) (DirHit, bool) {
+func probePath(client *http.Client, baseURL, word string, cal soft404Signature, responsesDir string) (DirHit, bool) {
 	if !strings.HasPrefix(word, "/") {
 		word = "/" + word
 	}
@@ -342,7 +351,7 @@ func probePath(client *http.Client, baseURL, word string, cal soft404Signature) 
 		return DirHit{}, false
 	}
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 	title := extractTitle(body)
 	contentLen := int64(len(body))
 	if resp.ContentLength > 0 {
@@ -358,6 +367,30 @@ func probePath(client *http.Client, baseURL, word string, cal soft404Signature) 
 		}
 	}
 
+	hitURL, _ := url.Parse(fullURL)
+	if resp.Request != nil && resp.Request.URL != nil {
+		hitURL = resp.Request.URL
+	}
+
+	// Save response to responses/ directory
+	if responsesDir != "" {
+		port := 80
+		if hitURL != nil {
+			if p, err := strconv.Atoi(hitURL.Port()); err == nil {
+				port = p
+			} else if hitURL.Scheme == "https" {
+				port = 443
+			}
+		}
+		SaveHTTPResponse(responsesDir, port, fullURL, resp.StatusCode, resp.Header, body)
+	}
+
+	// Extract links, parameters, and JS files from response body
+	var links, params, jsFiles []string
+	if hitURL != nil {
+		links, params, jsFiles = ExtractFromHTML(body, hitURL)
+	}
+
 	redirectLocation := resp.Header.Get("Location")
 
 	hit := DirHit{
@@ -369,6 +402,9 @@ func probePath(client *http.Client, baseURL, word string, cal soft404Signature) 
 		Title:       title,
 		RedirectURL: redirectLocation,
 		ContentType: resp.Header.Get("Content-Type"),
+		Links:       links,
+		Params:      params,
+		JSFiles:     jsFiles,
 	}
 
 	return hit, true
@@ -395,6 +431,9 @@ func printHitLive(hit DirHit) {
 		extra = fmt.Sprintf(" -> %s", utils.ColorInfo.Sprint(hit.RedirectURL))
 	} else if hit.Title != "" {
 		extra = fmt.Sprintf(" [%s]", utils.ColorBold.Sprint(hit.Title))
+	}
+	if len(hit.Params) > 0 || len(hit.JSFiles) > 0 {
+		extra += fmt.Sprintf(" %s", utils.ColorDim.Sprintf("(params: %d, js: %d)", len(hit.Params), len(hit.JSFiles)))
 	}
 
 	fmt.Printf("    %s %s %-8s %s%s\n",

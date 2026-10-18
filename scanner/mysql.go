@@ -145,6 +145,7 @@ func (r MySQLAuditResult) String() string {
 // AuditMySQL performs a native security and handshake audit on MySQL,
 // evaluating capabilities and testing default credentials using the official MySQL connector.
 func AuditMySQL(t *Target, p Port) MySQLAuditResult {
+	utils.LogAction("Initiating MySQL security audit on %s:%d...", t.Target, p.Port)
 	result := MySQLAuditResult{
 		Target: t.Target,
 		Port:   p.Port,
@@ -190,6 +191,12 @@ func AuditMySQL(t *Target, p Port) MySQLAuditResult {
 		}
 		if err != nil {
 			lastErr = err
+			errStr := strings.ToLower(err.Error())
+			// Fast-fail: if the server denies the connecting host (Code 1130) or connection is refused/timed out,
+			// subsequent credential attempts will fail with the exact same error.
+			if strings.Contains(errStr, "1130") || strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "no route to host") || strings.Contains(errStr, "i/o timeout") {
+				break
+			}
 		}
 	}
 

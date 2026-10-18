@@ -65,9 +65,8 @@ func Run(t *Target) {
 			if strings.Contains(mysqlAudit.DefaultAccess, "CRITICAL") {
 				EnumerateMySQL(t)
 			}
-		}
-
-		if isHTTPService(p) {
+		} else if isHTTPService(p) {
+			utils.LogAction("Initiating HTTP/HTTPS service audit on %s:%d...", t.Target, p.Port)
 			httpAudit := AuditHTTP(t, p)
 			fmt.Println(httpAudit)
 
@@ -86,6 +85,9 @@ func Run(t *Target) {
 				fmt.Println(dirsResult)
 			}
 
+			var allHits []DirHit
+			allHits = append(allHits, dirsResult.Hits...)
+
 			// If /index.php is found in standard directory enumeration, perform PHP-specific directory enumeration
 			if HasIndexPHP(dirsResult.Hits) {
 				utils.LogAction("Found /index.php on %s - initiating PHP-specific directory enumeration...", endpointURL)
@@ -93,8 +95,12 @@ func Run(t *Target) {
 				phpDirsResult := DirEnumPHP(endpointURL, path.Join(t.OutDir(), phpOutFileName))
 				if len(phpDirsResult.Hits) > 0 {
 					fmt.Println(phpDirsResult)
+					allHits = append(allHits, phpDirsResult.Hits...)
 				}
 			}
+
+			// Save HTTP responses and extract links, parameters, and JS files
+			ProcessAndExtractAssets(t, p.Port, endpointURL, allHits)
 		}
 	}
 }

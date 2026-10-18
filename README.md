@@ -65,3 +65,46 @@ Vulnerability severities (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) and exploit state
  │ - SameSite attributes     │                 │ - Swagger / API docs        │
  └───────────────────────────┘                 └─────────────────────────────┘
 ```
+
+## Heuristic Parameter & IDOR Mining Engine
+
+### How Intuition Maps to Code
+
+| What Your Eyes Detect | The Underlying Pattern | Automated Heuristic in Webzoro |
+| :--- | :--- | :--- |
+| **REST Direct References** (`/api/v1/users/42`, `/orders/9921/status`, `/doc/3fa85f64-...`) | Path contains an entity noun followed by an identifier (numeric ID, UUID, slug). | **REST Entity & ID Extractor**: Detects IDs in paths, identifies the parent resource (`user`, `order`, `doc`), and synthesizes corresponding query/body parameters (`id`, `user_id`, `userId`, `order_id`). |
+| **Entity Endpoints Without Parameters** (`/view_invoice.php`, `/api/profile`, `/download.php`) | The route implies an operation on a resource, but the parameter isn't visible in the link. | **Predictive Contextual Parameter Generator**: Extracts nouns (`invoice`, `profile`) and verbs (`download`, `view`, `edit`) to generate probable parameters (`invoice_id`, `id`, `user_id`, `file`, `path`, `filename`). |
+| **Modern JS Route Literals** (`` fetch(`/api/user/${userId}`) ``, `axios.get('/doc/' + id)`) | SPA frontend dynamically injects variables into URLs. | **JS Template & Concatenation Parser**: Parses backtick template literals (`` `/route/${var}` ``) and concatenation patterns (`'/path/' + id`), extracting `userId` and `id` as direct parameters. |
+| **Hidden Form Inputs** (`<input type="hidden" name="account_id" value="105">`) | Backend passes state or authorization contexts client-side. | **High-Value Input Tagging**: Prioritizes hidden inputs and tags them as high-confidence IDOR/privilege candidates. |
+| **High-Risk Parameter Names** (`user_id`, `role`, `tenant_id`, `order_no`, `account`) | Parameters that directly control object reference or privilege level. | **Parameter Classification & IDOR Candidate Tagging**: Categorizes parameters into `Object Reference (IDOR)`, `Privilege / Role`, and `Resource / File Path`. |
+
+---
+
+### Design for `scanner/extract.go`
+
+```
+┌────────────────────────────────────────────────────────┐
+│   Collected Assets (Probed Hits, HTML Responses, JS)   │
+└───────────────────────────┬────────────────────────────┘
+                            │
+       ┌────────────────────┼────────────────────┐
+       ▼                    ▼                    ▼
+[REST & Path Analyzer]  [JS Template/AST]    [HTML Hidden Form]
+  - Numeric IDs (/42)     - `${userId}`        - type="hidden"
+  - UUIDs / Hex Hashes    - '/api/' + id       - JSON payload keys
+  - Entity Nouns          - axios / fetch      - Data attributes
+       │                    │                    │
+       └────────────────────┼────────────────────┘
+                            ▼
+     [Semantic Parameter Inference & IDOR Classifier]
+       1. Maps entities to permutations: {noun}_id, {noun}Id, id, {noun}_no
+       2. Maps action verbs: download -> file, path, filename, doc_id
+       3. Flags direct object references (IDOR Candidates)
+                            │
+                            ▼
+     [Target Artifacts in .local/<target>/]
+       - params.txt           (Raw deduplicated parameters)
+       - params_inferred.txt  (Target-specific inferred wordlist for fuzzing)
+       - idor_candidates.json (Structured endpoints with entities and candidate params)
+       - idor_candidates.txt  (Ready-to-fuzz URLs: /api/users?user_id=FUZZ)
+```
