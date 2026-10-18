@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/4lch3mis7/webzoro-golang/enum"
@@ -69,6 +70,21 @@ func Run(t *Target) {
 		if isHTTPService(p) {
 			httpAudit := AuditHTTP(t, p)
 			fmt.Println(httpAudit)
+
+			// Run native directory enumeration
+			scheme := httpAudit.Scheme
+			if scheme == "" {
+				scheme = "http"
+			}
+			endpointURL := fmt.Sprintf("%s://%s:%d", scheme, t.Target, p.Port)
+			if (scheme == "http" && p.Port == 80) || (scheme == "https" && p.Port == 443) {
+				endpointURL = fmt.Sprintf("%s://%s", scheme, t.Target)
+			}
+			outFileName := fmt.Sprintf("dirs_%d.json", p.Port)
+			dirsResult := DirEnum(endpointURL, path.Join(t.OutDir(), outFileName))
+			if len(dirsResult.Hits) > 0 {
+				fmt.Println(dirsResult)
+			}
 		}
 	}
 }

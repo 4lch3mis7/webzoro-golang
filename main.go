@@ -18,7 +18,6 @@ var binariesRequired = []string{
 	"nmap",
 	"subfinder",
 	"nuclei",
-	"ffuf",
 }
 
 // Check if the dependencies (binaries required) are installed or not
