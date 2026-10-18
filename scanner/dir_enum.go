@@ -92,7 +92,7 @@ func (r DirEnumResult) String() string {
 		case hit.StatusCode >= 300 && hit.StatusCode < 400:
 			tag = utils.TagInfo()
 			statusColor = utils.ColorInfo.Sprint(fmt.Sprintf("%-3d", hit.StatusCode))
-		case hit.StatusCode == 401 || hit.StatusCode == 403:
+		case hit.StatusCode >= 400 && hit.StatusCode < 500:
 			tag = utils.TagWarn()
 			statusColor = utils.ColorWarn.Sprint(fmt.Sprintf("%-3d", hit.StatusCode))
 		case hit.StatusCode >= 500:
@@ -139,7 +139,7 @@ func HasIndexPHP(hits []DirHit) bool {
 	for _, hit := range hits {
 		p := strings.ToLower(strings.TrimSpace(hit.Path))
 		if p == "/index.php" || p == "index.php" {
-			if hit.StatusCode >= 200 && hit.StatusCode < 500 && hit.StatusCode != 404 && hit.StatusCode != 400 {
+			if hit.StatusCode >= 200 && hit.StatusCode < 500 && hit.StatusCode != 404 {
 				return true
 			}
 		}
@@ -346,8 +346,8 @@ func probePath(client *http.Client, baseURL, word string, cal soft404Signature, 
 	}
 	defer resp.Body.Close()
 
-	// Ignore 404 Not Found, 400 Bad Request
-	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest {
+	// Ignore 404 Not Found
+	if resp.StatusCode == http.StatusNotFound {
 		return DirHit{}, false
 	}
 
@@ -418,7 +418,7 @@ func printHitLive(hit DirHit) {
 	case hit.StatusCode >= 300 && hit.StatusCode < 400:
 		tag = utils.TagInfo()
 		statusColor = utils.ColorInfo.Sprint(fmt.Sprintf("%-3d", hit.StatusCode))
-	case hit.StatusCode == 401 || hit.StatusCode == 403:
+	case hit.StatusCode >= 400 && hit.StatusCode < 500:
 		tag = utils.TagWarn()
 		statusColor = utils.ColorWarn.Sprint(fmt.Sprintf("%-3d", hit.StatusCode))
 	case hit.StatusCode >= 500:

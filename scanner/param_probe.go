@@ -168,6 +168,9 @@ func VerifyParameters(t *Target, port int, baseURLStr string, assets ExtractedAs
 			MaxIdleConns:        50,
 			MaxIdleConnsPerHost: 20,
 		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 		Timeout: 5 * time.Second,
 	}
 

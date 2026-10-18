@@ -944,8 +944,9 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 	var probeURLs []string
 	probeURLs = append(probeURLs, baseURLStr+"/")
 	for _, h := range hits {
-		if h.URL != "" && h.StatusCode != 404 && h.StatusCode != 400 {
+		if h.URL != "" && h.StatusCode != 404 {
 			probeURLs = append(probeURLs, h.URL)
+			masterLinks[h.URL] = true
 		}
 		for _, j := range h.JSFiles {
 			masterJS[j] = true
