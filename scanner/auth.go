@@ -161,11 +161,15 @@ func ExtractAuthFromHTML(body []byte, baseURL *url.URL) []AuthSurface {
 		isRegMatch := regKeywordRegex.MatchString(pageContext)
 
 		var wfType AuthWorkflowType
-		if isResetMatch || (!hasPassword && hasIdentifier && resetKeywordRegex.MatchString(resolvedURL)) {
-			wfType = AuthTypeReset
-		} else if isRegMatch || hasConfirmPassword {
+		if hasConfirmPassword || (hasPassword && (isRegMatch || strings.Contains(strings.ToLower(resolvedURL), "register"))) {
 			wfType = AuthTypeRegister
-		} else if isLoginMatch || (hasPassword && hasIdentifier) {
+		} else if hasPassword && hasIdentifier {
+			wfType = AuthTypeLogin
+		} else if !hasPassword && hasIdentifier && (isResetMatch || resetKeywordRegex.MatchString(resolvedURL)) {
+			wfType = AuthTypeReset
+		} else if isResetMatch && (hasConfirmPassword || strings.Contains(strings.ToLower(resolvedURL), "reset")) {
+			wfType = AuthTypeReset
+		} else if isLoginMatch {
 			wfType = AuthTypeLogin
 		} else {
 			continue // Not an auth form

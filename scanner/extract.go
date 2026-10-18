@@ -31,16 +31,28 @@ type IDORCandidate struct {
 	FuzzURLs        []string `json:"fuzz_urls,omitempty"`
 }
 
+// JSAnalysisReport captures the detailed analysis results for an individual JavaScript asset.
+type JSAnalysisReport struct {
+	URL        string   `json:"url"`
+	LocalPath  string   `json:"local_path,omitempty"`
+	Status     string   `json:"status"` // "downloaded", "cached", "404/failed", "external CDN"
+	Endpoints  []string `json:"endpoints,omitempty"`
+	Params     []string `json:"params,omitempty"`
+	IDORs      []string `json:"idor_templates,omitempty"`
+	AuthSmells []string `json:"auth_smells,omitempty"`
+}
+
 // ExtractedAssets stores deduplicated endpoints, parameters, inferred candidates, and JS files.
 type ExtractedAssets struct {
-	TargetURL      string          `json:"target_url"`
-	Port           int             `json:"port"`
-	Links          []string        `json:"links"`
-	Parameters     []string        `json:"parameters"`
-	InferredParams []string        `json:"inferred_parameters"`
-	IDORCandidates []IDORCandidate `json:"idor_candidates"`
-	JSFiles        []string        `json:"js_files"`
-	AuthSurfaces   []AuthSurface   `json:"auth_surfaces,omitempty"`
+	TargetURL      string             `json:"target_url"`
+	Port           int                `json:"port"`
+	Links          []string           `json:"links"`
+	Parameters     []string           `json:"parameters"`
+	InferredParams []string           `json:"inferred_parameters"`
+	IDORCandidates []IDORCandidate    `json:"idor_candidates"`
+	JSFiles        []string           `json:"js_files"`
+	AuthSurfaces   []AuthSurface      `json:"auth_surfaces,omitempty"`
+	JSReports      []JSAnalysisReport `json:"js_analysis,omitempty"`
 }
 
 var (
@@ -468,6 +480,96 @@ func ExtractFormIDORCandidates(body []byte, baseURL *url.URL) []IDORCandidate {
 	return candidates
 }
 
+// isStaticAssetPath returns true if a path points to static or media assets rather than API resources.
+func isStaticAssetPath(p string) bool {
+	pLower := strings.ToLower(p)
+	staticDirs := []string{"/css/", "/js/", "/images/", "/image/", "/img/", "/fonts/", "/font/", "/assets/", "/static/", "/dist/", "/vendor/", "/locales/", "/media/"}
+	for _, d := range staticDirs {
+		if strings.HasPrefix(pLower, d) || strings.Contains(pLower, d) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractPrecedingEntity finds the resource noun immediately preceding a variable in a URL path.
+// e.g. "/api/v1/users/${id}" -> "user", "/orders/" + id -> "order"
+func extractPrecedingEntity(pathStr, varPlaceholder string) string {
+	idx := len(pathStr)
+	if varPlaceholder != "" {
+		if i := strings.Index(pathStr, varPlaceholder); i >= 0 {
+			idx = i
+		}
+	}
+	sub := pathStr[:idx]
+	if qIdx := strings.Index(sub, "?"); qIdx >= 0 {
+		sub = sub[:qIdx]
+	}
+	sub = strings.TrimRight(sub, "/")
+	parts := strings.Split(sub, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	lastSegment := strings.ToLower(strings.TrimSpace(parts[len(parts)-1]))
+	reg := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	clean := reg.ReplaceAllString(lastSegment, "")
+	return singularizeEntity(clean)
+}
+
+// isValidJSRouteTemplate checks if a JS template literal resembles an HTTP route or API endpoint.
+// Eliminates false positives from DOM event handlers, CSS selectors, style measurements, and error strings.
+func isValidJSRouteTemplate(literal string) bool {
+	literal = strings.TrimSpace(literal)
+	if len(literal) < 3 {
+		return false
+	}
+
+	// Must contain at least one template variable ${...}
+	if !jsTemplateVarRegex.MatchString(literal) {
+		return false
+	}
+
+	// Replace template variables ${...} with a dummy token to inspect the URL structure
+	skeleton := jsTemplateVarRegex.ReplaceAllString(literal, "X")
+
+	// Must start with a path separator or URL scheme: "/", "http://", "https://", "./", "../"
+	if !strings.HasPrefix(skeleton, "/") && !strings.HasPrefix(skeleton, "http://") && !strings.HasPrefix(skeleton, "https://") && !strings.HasPrefix(skeleton, "./") && !strings.HasPrefix(skeleton, "../") {
+		return false
+	}
+
+	// Must contain a forward slash
+	if !strings.Contains(skeleton, "/") {
+		return false
+	}
+
+	// Must NOT contain whitespace, newlines, quotes, or HTML/CSS selector syntax
+	if strings.ContainsAny(skeleton, " \t\r\n\"'`<>[]{}();,^!*~|#") {
+		return false
+	}
+
+	skeletonLower := strings.ToLower(skeleton)
+
+	// Reject CSS pseudo-classes, units, or styling
+	if strings.Contains(skeletonLower, ":not") || strings.Contains(skeletonLower, "::") {
+		return false
+	}
+	if strings.HasSuffix(skeletonLower, "px") || strings.HasSuffix(skeletonLower, "em") || strings.HasSuffix(skeletonLower, "rem") || strings.HasSuffix(skeletonLower, "%") {
+		return false
+	}
+
+	// Reject common DOM events and framework noise
+	if strings.Contains(skeletonLower, "data-bs") || strings.Contains(skeletonLower, "data-api") || strings.Contains(skeletonLower, "event") {
+		return false
+	}
+
+	// Reject static asset prefixes
+	if isStaticAssetPath(skeletonLower) {
+		return false
+	}
+
+	return true
+}
+
 // ExtractJSTemplateIDORCandidates scans JavaScript code for backtick template literals and concatenations.
 func ExtractJSTemplateIDORCandidates(jsBody []byte, baseURL *url.URL) []IDORCandidate {
 	var candidates []IDORCandidate
@@ -475,7 +577,11 @@ func ExtractJSTemplateIDORCandidates(jsBody []byte, baseURL *url.URL) []IDORCand
 
 	// 1. Template literal routes: `/api/users/${userId}` or `/orders/${order.id}`
 	for _, m := range jsTemplateLiteralRegex.FindAllStringSubmatch(jsStr, -1) {
-		literal := m[1]
+		literal := strings.TrimSpace(m[1])
+		if !isValidJSRouteTemplate(literal) {
+			continue
+		}
+
 		varMatches := jsTemplateVarRegex.FindAllStringSubmatch(literal, -1)
 		for _, vm := range varMatches {
 			rawVar := strings.TrimSpace(vm[1])
@@ -488,6 +594,24 @@ func ExtractJSTemplateIDORCandidates(jsBody []byte, baseURL *url.URL) []IDORCand
 				continue
 			}
 
+			precedingEntity := extractPrecedingEntity(literal, vm[0])
+
+			// If varName is a minified single letter (e.g. 'e', 't', 'n'),
+			// only accept if the preceding path segment is a known resource entity.
+			if len(varName) <= 1 {
+				if precedingEntity == "" || !knownEntities[precedingEntity] {
+					continue
+				}
+			}
+
+			entity := precedingEntity
+			if entity == "" || !knownEntities[entity] {
+				entity = singularizeEntity(varName)
+			}
+			if entity == "" {
+				entity = "item"
+			}
+
 			// Clean route for fuzz URL
 			cleanRoute := jsTemplateVarRegex.ReplaceAllString(literal, "FUZZ")
 			resolvedFuzzURL := cleanRoute
@@ -495,7 +619,6 @@ func ExtractJSTemplateIDORCandidates(jsBody []byte, baseURL *url.URL) []IDORCand
 				resolvedFuzzURL = baseURL.ResolveReference(&url.URL{Path: cleanRoute}).String()
 			}
 
-			entity := singularizeEntity(varName)
 			candidates = append(candidates, IDORCandidate{
 				URL:             literal,
 				Method:          "GET",
@@ -512,6 +635,10 @@ func ExtractJSTemplateIDORCandidates(jsBody []byte, baseURL *url.URL) []IDORCand
 	// 2. JavaScript concatenations: "/api/orders/" + orderId
 	for _, m := range jsConcatRegex.FindAllStringSubmatch(jsStr, -1) {
 		routePrefix := m[1]
+		if isStaticAssetPath(routePrefix) {
+			continue
+		}
+
 		rawVar := strings.TrimSpace(m[2])
 		varName := rawVar
 		if strings.Contains(rawVar, ".") {
@@ -522,8 +649,22 @@ func ExtractJSTemplateIDORCandidates(jsBody []byte, baseURL *url.URL) []IDORCand
 			continue
 		}
 
+		precedingEntity := extractPrecedingEntity(routePrefix, "")
+		if len(varName) <= 1 {
+			if precedingEntity == "" || !knownEntities[precedingEntity] {
+				continue
+			}
+		}
+
+		entity := precedingEntity
+		if entity == "" || !knownEntities[entity] {
+			entity = singularizeEntity(varName)
+		}
+		if entity == "" {
+			entity = "item"
+		}
+
 		resolvedFuzzURL := baseURL.ResolveReference(&url.URL{Path: routePrefix + "FUZZ"}).String()
-		entity := singularizeEntity(varName)
 		candidates = append(candidates, IDORCandidate{
 			URL:             routePrefix + "+ " + rawVar,
 			Method:          "GET",
@@ -595,8 +736,25 @@ func ExtractFromHTML(body []byte, baseURL *url.URL) ([]string, []string, []strin
 	return setToSlice(linkMap), setToSlice(paramMap), setToSlice(jsMap)
 }
 
+// isVendorJSLibrary detects third-party UI/utility libraries that should not have their internal object keys mined.
+func isVendorJSLibrary(filenameOrURL string) bool {
+	lower := strings.ToLower(filenameOrURL)
+	vendors := []string{
+		"bootstrap", "jquery", "popper", "react", "vue", "angular",
+		"lodash", "moment", "fontawesome", "swiper", "select2",
+		"chart.min.js", "chart.js", "core-js", "polyfill", "modernizr",
+		"materialize", "semantic", "foundation", "uikit", "alpine",
+	}
+	for _, v := range vendors {
+		if strings.Contains(lower, v) {
+			return true
+		}
+	}
+	return false
+}
+
 // ExtractFromJS parses JavaScript content for endpoints, API paths, and parameters.
-func ExtractFromJS(jsBody []byte, baseURL *url.URL) ([]string, []string, []string) {
+func ExtractFromJS(jsBody []byte, baseURL *url.URL, isVendor bool) ([]string, []string, []string) {
 	linkMap := make(map[string]bool)
 	paramMap := make(map[string]bool)
 	jsMap := make(map[string]bool)
@@ -639,12 +797,14 @@ func ExtractFromJS(jsBody []byte, baseURL *url.URL) ([]string, []string, []strin
 		}
 	}
 
-	// 5. Extract JSON keys in JS objects
-	for _, m := range jsonKeyRegex.FindAllStringSubmatch(jsStr, -1) {
-		if len(m) > 1 {
-			p := strings.TrimSpace(m[1])
-			if isValidParam(p) {
-				paramMap[p] = true
+	// 5. Extract JSON keys in JS objects (skipped on vendor libraries to prevent UI state noise)
+	if !isVendor {
+		for _, m := range jsonKeyRegex.FindAllStringSubmatch(jsStr, -1) {
+			if len(m) > 1 {
+				p := strings.TrimSpace(m[1])
+				if isValidParam(p) {
+					paramMap[p] = true
+				}
 			}
 		}
 	}
@@ -652,6 +812,9 @@ func ExtractFromJS(jsBody []byte, baseURL *url.URL) ([]string, []string, []strin
 	// 6. Extract template variables inside template literals
 	for _, m := range jsTemplateLiteralRegex.FindAllStringSubmatch(jsStr, -1) {
 		literal := m[1]
+		if !isValidJSRouteTemplate(literal) {
+			continue
+		}
 		varMatches := jsTemplateVarRegex.FindAllStringSubmatch(literal, -1)
 		for _, vm := range varMatches {
 			rawVar := strings.TrimSpace(vm[1])
@@ -660,7 +823,7 @@ func ExtractFromJS(jsBody []byte, baseURL *url.URL) ([]string, []string, []strin
 				parts := strings.Split(rawVar, ".")
 				varName = parts[len(parts)-1]
 			}
-			if isValidParam(varName) {
+			if isValidParam(varName) && len(varName) > 1 {
 				paramMap[varName] = true
 			}
 		}
@@ -668,13 +831,17 @@ func ExtractFromJS(jsBody []byte, baseURL *url.URL) ([]string, []string, []strin
 
 	// 7. Extract variables from JS string concatenations
 	for _, m := range jsConcatRegex.FindAllStringSubmatch(jsStr, -1) {
+		routePrefix := m[1]
+		if isStaticAssetPath(routePrefix) {
+			continue
+		}
 		rawVar := strings.TrimSpace(m[2])
 		varName := rawVar
 		if strings.Contains(rawVar, ".") {
 			parts := strings.Split(rawVar, ".")
 			varName = parts[len(parts)-1]
 		}
-		if isValidParam(varName) {
+		if isValidParam(varName) && len(varName) > 1 {
 			paramMap[varName] = true
 		}
 	}
@@ -726,11 +893,25 @@ func processLink(raw string, baseURL *url.URL, linkMap, paramMap, jsMap map[stri
 
 func isValidParam(p string) bool {
 	p = strings.TrimSpace(p)
-	if len(p) == 0 || len(p) > 64 {
+	if len(p) <= 1 || len(p) > 64 {
+		if len(p) == 1 {
+			switch strings.ToLower(p) {
+			case "q", "p", "s", "v", "t", "id":
+				return true
+			}
+		}
 		return false
 	}
-	switch strings.ToLower(p) {
+	pLower := strings.ToLower(p)
+	switch pLower {
 	case "true", "false", "null", "undefined", "string", "number", "object", "function":
+		return false
+	}
+	// Filter out common CSS classes, Popper placements, and layout tokens
+	if strings.HasPrefix(pLower, "carousel-") || strings.HasPrefix(pLower, "data-popper") ||
+		strings.HasPrefix(pLower, "bottom-") || strings.HasPrefix(pLower, "top-") ||
+		strings.HasPrefix(pLower, "left-") || strings.HasPrefix(pLower, "right-") ||
+		strings.HasPrefix(pLower, "_") {
 		return false
 	}
 	return true
@@ -896,8 +1077,10 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 	analyzedJSCount := 0
 	failedJSCount := 0
 	externalJSCount := 0
+	var jsReports []JSAnalysisReport
 
-	for jsURL := range masterJS {
+	sortedJS := setToSlice(masterJS)
+	for _, jsURL := range sortedJS {
 		jsParsed, err := url.Parse(jsURL)
 		if err != nil {
 			continue
@@ -906,6 +1089,10 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 		// Only download target-origin or subdomain JS files
 		if !isSameTargetHost(jsParsed.Hostname(), baseU.Hostname()) {
 			externalJSCount++
+			jsReports = append(jsReports, JSAnalysisReport{
+				URL:    jsURL,
+				Status: "external CDN",
+			})
 			continue
 		}
 
@@ -927,6 +1114,7 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 		}
 
 		var jsBody []byte
+		status := "downloaded"
 		if utils.FileExists(localJSPath) {
 			data, err := os.ReadFile(localJSPath)
 			if err == nil && len(data) > 0 {
@@ -937,6 +1125,7 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 					jsBody = data
 					cachedJSCount++
 					analyzedJSCount++
+					status = "cached"
 				}
 			}
 		}
@@ -945,6 +1134,10 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 			req, err := http.NewRequestWithContext(context.Background(), "GET", jsURL, nil)
 			if err != nil {
 				failedJSCount++
+				jsReports = append(jsReports, JSAnalysisReport{
+					URL:    jsURL,
+					Status: "404/failed",
+				})
 				continue
 			}
 			req.Header.Set("User-Agent", "Webzoro-Recon/1.0")
@@ -952,6 +1145,10 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 			resp, err := client.Do(req)
 			if err != nil {
 				failedJSCount++
+				jsReports = append(jsReports, JSAnalysisReport{
+					URL:    jsURL,
+					Status: "404/failed",
+				})
 				continue
 			}
 
@@ -959,6 +1156,10 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				resp.Body.Close()
 				failedJSCount++
+				jsReports = append(jsReports, JSAnalysisReport{
+					URL:    jsURL,
+					Status: "404/failed",
+				})
 				continue
 			}
 
@@ -970,14 +1171,31 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 				_ = os.WriteFile(localJSPath, jsBody, 0644)
 				downloadedJSCount++
 				analyzedJSCount++
+				status = "downloaded"
 			} else {
 				failedJSCount++
+				jsReports = append(jsReports, JSAnalysisReport{
+					URL:    jsURL,
+					Status: "404/failed",
+				})
+				continue
 			}
+		}
+
+		isVendor := isVendorJSLibrary(jsURL)
+		if isVendor {
+			status += ", vendor"
+		}
+
+		report := JSAnalysisReport{
+			URL:       jsURL,
+			LocalPath: localJSPath,
+			Status:    status,
 		}
 
 		if len(jsBody) > 0 {
 			// Extract endpoints, routes, and parameters from JS code
-			links, params, extraJS := ExtractFromJS(jsBody, baseU)
+			links, params, extraJS := ExtractFromJS(jsBody, baseU, isVendor)
 			for _, l := range links {
 				masterLinks[l] = true
 			}
@@ -991,11 +1209,24 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 			// Extract template literal and concatenation IDOR candidates from JS
 			for _, cand := range ExtractJSTemplateIDORCandidates(jsBody, baseU) {
 				addIDOR(cand)
+				report.IDORs = append(report.IDORs, cand.URL)
 			}
 
 			// Passively analyze JS code for auth endpoints, token leaks, and client-side logic
-			allAuthSurfaces = append(allAuthSurfaces, AnalyzeAuthFromJS(jsBody, jsURL, baseU)...)
+			authSurfs := AnalyzeAuthFromJS(jsBody, jsURL, baseU)
+			allAuthSurfaces = append(allAuthSurfaces, authSurfs...)
+			for _, a := range authSurfs {
+				for _, smell := range a.Smells {
+					report.AuthSmells = append(report.AuthSmells, smell.Description)
+				}
+			}
+
+			report.Endpoints = deduplicateAndSort(links)
+			report.Params = deduplicateAndSort(params)
+			report.IDORs = deduplicateAndSort(report.IDORs)
+			report.AuthSmells = deduplicateAndSort(report.AuthSmells)
 		}
+		jsReports = append(jsReports, report)
 	}
 
 	// 3. Scan all discovered links for REST Path IDOR patterns & contextual parameters
@@ -1027,6 +1258,7 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 		IDORCandidates: idorCandidates,
 		JSFiles:        setToSlice(masterJS),
 		AuthSurfaces:   DeduplicateAuthSurfaces(allAuthSurfaces),
+		JSReports:      jsReports,
 	}
 
 	// 4. Persist lists to target output directory
@@ -1095,28 +1327,58 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 		)
 	}
 	if len(assets.Parameters) > 0 {
-		sampleParams := assets.Parameters
-		if len(sampleParams) > 6 {
-			sampleParams = sampleParams[:6]
+		if t.Verbose {
+			fmt.Printf("      - %-20s: %s observed param(s) -> %s\n",
+				utils.ColorBold.Sprint("Observed Params"),
+				utils.ColorHighlight.Sprintf("%d", len(assets.Parameters)),
+				utils.ColorDim.Sprint(paramsFile),
+			)
+			for i := 0; i < len(assets.Parameters); i += 10 {
+				end := i + 10
+				if end > len(assets.Parameters) {
+					end = len(assets.Parameters)
+				}
+				fmt.Printf("        %s\n", utils.ColorVersion.Sprint(strings.Join(assets.Parameters[i:end], ", ")))
+			}
+		} else {
+			sampleParams := assets.Parameters
+			if len(sampleParams) > 6 {
+				sampleParams = sampleParams[:6]
+			}
+			fmt.Printf("      - %-20s: %s observed param(s) [%s...] -> %s\n",
+				utils.ColorBold.Sprint("Observed Params"),
+				utils.ColorHighlight.Sprintf("%d", len(assets.Parameters)),
+				utils.ColorVersion.Sprint(strings.Join(sampleParams, ", ")),
+				utils.ColorDim.Sprint(paramsFile),
+			)
 		}
-		fmt.Printf("      - %-20s: %s observed param(s) [%s...] -> %s\n",
-			utils.ColorBold.Sprint("Observed Params"),
-			utils.ColorHighlight.Sprintf("%d", len(assets.Parameters)),
-			utils.ColorVersion.Sprint(strings.Join(sampleParams, ", ")),
-			utils.ColorDim.Sprint(paramsFile),
-		)
 	}
 	if len(assets.InferredParams) > 0 {
-		sampleInferred := assets.InferredParams
-		if len(sampleInferred) > 6 {
-			sampleInferred = sampleInferred[:6]
+		if t.Verbose {
+			fmt.Printf("      - %-20s: %s inferred param(s) -> %s\n",
+				utils.ColorBold.Sprint("Inferred Params"),
+				utils.ColorHighlight.Sprintf("%d", len(assets.InferredParams)),
+				utils.ColorDim.Sprint(paramsInferredFile),
+			)
+			for i := 0; i < len(assets.InferredParams); i += 10 {
+				end := i + 10
+				if end > len(assets.InferredParams) {
+					end = len(assets.InferredParams)
+				}
+				fmt.Printf("        %s\n", utils.ColorVersion.Sprint(strings.Join(assets.InferredParams[i:end], ", ")))
+			}
+		} else {
+			sampleInferred := assets.InferredParams
+			if len(sampleInferred) > 6 {
+				sampleInferred = sampleInferred[:6]
+			}
+			fmt.Printf("      - %-20s: %s inferred param(s) [%s...] -> %s\n",
+				utils.ColorBold.Sprint("Inferred Params"),
+				utils.ColorHighlight.Sprintf("%d", len(assets.InferredParams)),
+				utils.ColorVersion.Sprint(strings.Join(sampleInferred, ", ")),
+				utils.ColorDim.Sprint(paramsInferredFile),
+			)
 		}
-		fmt.Printf("      - %-20s: %s inferred param(s) [%s...] -> %s\n",
-			utils.ColorBold.Sprint("Inferred Params"),
-			utils.ColorHighlight.Sprintf("%d", len(assets.InferredParams)),
-			utils.ColorVersion.Sprint(strings.Join(sampleInferred, ", ")),
-			utils.ColorDim.Sprint(paramsInferredFile),
-		)
 	}
 	if len(assets.IDORCandidates) > 0 {
 		fmt.Printf("      - %-20s: %s potential IDOR endpoint(s) flagged -> %s\n",
@@ -1198,6 +1460,109 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 			strings.Join(detailParts, ", "),
 			utils.ColorDim.Sprint(jsFile),
 		)
+
+		if t.Verbose {
+			// Verbose Mode: detailed analysis breakdown per JS file
+			for _, rep := range assets.JSReports {
+				statusBadge := utils.ColorHighlight.Sprintf("[%s]", rep.Status)
+				if rep.Status == "404/failed" {
+					statusBadge = utils.ColorError.Sprintf("[%s]", rep.Status)
+				} else if rep.Status == "external CDN" {
+					statusBadge = utils.ColorDim.Sprintf("[%s]", rep.Status)
+				}
+
+				relPath := rep.LocalPath
+				if relPath != "" {
+					if rel, err := filepath.Rel(t.OutDir(), relPath); err == nil {
+						relPath = " (" + rel + ")"
+					} else {
+						relPath = " (" + relPath + ")"
+					}
+				}
+
+				fmt.Printf("        • %s %s%s\n",
+					utils.ColorBold.Sprint(rep.URL),
+					statusBadge,
+					utils.ColorDim.Sprint(relPath),
+				)
+
+				if len(rep.Endpoints) > 0 {
+					sample := rep.Endpoints
+					if len(sample) > 5 {
+						sample = sample[:5]
+					}
+					fmt.Printf("          - %s (%d): %s\n",
+						utils.ColorInfo.Sprint("Endpoints"),
+						len(rep.Endpoints),
+						utils.ColorVersion.Sprint(strings.Join(sample, ", ")),
+					)
+				}
+				if len(rep.Params) > 0 {
+					sample := rep.Params
+					if len(sample) > 8 {
+						sample = sample[:8]
+					}
+					fmt.Printf("          - %s (%d): %s\n",
+						utils.ColorInfo.Sprint("Parameters"),
+						len(rep.Params),
+						utils.ColorVersion.Sprint(strings.Join(sample, ", ")),
+					)
+				}
+				if len(rep.IDORs) > 0 {
+					fmt.Printf("          - %s (%d): %s\n",
+						utils.ColorWarn.Sprint("IDOR Patterns"),
+						len(rep.IDORs),
+						utils.ColorCritical.Sprint(strings.Join(rep.IDORs, ", ")),
+					)
+				}
+				if len(rep.AuthSmells) > 0 {
+					for _, smell := range rep.AuthSmells {
+						fmt.Printf("          - %s: %s\n",
+							utils.ColorWarn.Sprint("Auth Finding"),
+							utils.ColorCritical.Sprint(smell),
+						)
+					}
+				}
+				if len(rep.Endpoints) == 0 && len(rep.Params) == 0 && len(rep.IDORs) == 0 && len(rep.AuthSmells) == 0 && rep.Status != "404/failed" && rep.Status != "external CDN" {
+					fmt.Printf("          - %s\n", utils.ColorDim.Sprint("No endpoints, parameters, or IDOR patterns detected in this script"))
+				}
+			}
+		} else {
+			// Standard Mode: clean preview of analyzed files and what was extracted
+			maxPreview := 3
+			analyzedCount := 0
+			for _, rep := range assets.JSReports {
+				if rep.Status == "downloaded" || rep.Status == "cached" {
+					analyzedCount++
+					if analyzedCount <= maxPreview {
+						var findings []string
+						if len(rep.Endpoints) > 0 {
+							findings = append(findings, fmt.Sprintf("%d endpoint(s)", len(rep.Endpoints)))
+						}
+						if len(rep.Params) > 0 {
+							findings = append(findings, fmt.Sprintf("%d param(s)", len(rep.Params)))
+						}
+						if len(rep.IDORs) > 0 {
+							findings = append(findings, fmt.Sprintf("%d IDOR pattern(s)", len(rep.IDORs)))
+						}
+						if len(rep.AuthSmells) > 0 {
+							findings = append(findings, fmt.Sprintf("%d auth smell(s)", len(rep.AuthSmells)))
+						}
+						findingStr := "no endpoints/params extracted"
+						if len(findings) > 0 {
+							findingStr = strings.Join(findings, ", ")
+						}
+						fmt.Printf("        • %s (%s)\n",
+							utils.ColorBold.Sprint(rep.URL),
+							utils.ColorVersion.Sprint(findingStr),
+						)
+					}
+				}
+			}
+			if analyzedCount > maxPreview {
+				fmt.Printf("        %s\n", utils.ColorDim.Sprintf("...and %d more JS file(s) (use --verbose to expand all)", analyzedCount-maxPreview))
+			}
+		}
 	}
 	fmt.Println()
 
