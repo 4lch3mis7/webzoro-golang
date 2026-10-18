@@ -85,6 +85,16 @@ func Run(t *Target) {
 			if len(dirsResult.Hits) > 0 {
 				fmt.Println(dirsResult)
 			}
+
+			// If /index.php is found in standard directory enumeration, perform PHP-specific directory enumeration
+			if HasIndexPHP(dirsResult.Hits) {
+				utils.LogAction("Found /index.php on %s - initiating PHP-specific directory enumeration...", endpointURL)
+				phpOutFileName := fmt.Sprintf("dirs_php_%d.json", p.Port)
+				phpDirsResult := DirEnumPHP(endpointURL, path.Join(t.OutDir(), phpOutFileName))
+				if len(phpDirsResult.Hits) > 0 {
+					fmt.Println(phpDirsResult)
+				}
+			}
 		}
 	}
 }

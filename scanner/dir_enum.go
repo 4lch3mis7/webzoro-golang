@@ -39,6 +39,7 @@ type DirHit struct {
 // DirEnumResult contains all findings from the directory enumeration scan.
 type DirEnumResult struct {
 	TargetURL  string   `json:"target_url"`
+	ScanType   string   `json:"scan_type,omitempty"`
 	TotalWords int      `json:"total_words"`
 	Hits       []DirHit `json:"hits"`
 	Duration   string   `json:"duration"`
@@ -60,9 +61,14 @@ func formatSize(bytes int64) string {
 func (r DirEnumResult) String() string {
 	var sb strings.Builder
 
+	title := "Directory Enumeration Results"
+	if r.ScanType != "" {
+		title = r.ScanType + " Results"
+	}
+
 	header := fmt.Sprintf("\n%s %s (%s - %s words in %s):\n",
 		utils.TagSuccess(),
-		utils.ColorHeader.Sprint("Directory Enumeration Results"),
+		utils.ColorHeader.Sprint(title),
 		utils.ColorHighlight.Sprint(r.TargetURL),
 		utils.ColorHighlight.Sprintf("%d", r.TotalWords),
 		r.Duration,
@@ -112,8 +118,33 @@ func (r DirEnumResult) String() string {
 	return sb.String()
 }
 
-// DirEnum performs fast, concurrent native Go directory and file discovery on targetUrl.
+// DirEnum performs fast, concurrent native Go directory and file discovery on targetUrl using the common wordlist.
 func DirEnum(targetURL string, outputFile string) DirEnumResult {
+	words := loadCommonWordlist()
+	return runDirEnum(targetURL, outputFile, words, "Directory Enumeration")
+}
+
+// DirEnumPHP performs PHP-specific directory and file discovery on targetUrl.
+func DirEnumPHP(targetURL string, outputFile string) DirEnumResult {
+	words := loadPHPWordlist()
+	return runDirEnum(targetURL, outputFile, words, "PHP Directory Enumeration")
+}
+
+// HasIndexPHP checks if /index.php was discovered during directory enumeration.
+func HasIndexPHP(hits []DirHit) bool {
+	for _, hit := range hits {
+		p := strings.ToLower(strings.TrimSpace(hit.Path))
+		if p == "/index.php" || p == "index.php" {
+			if hit.StatusCode >= 200 && hit.StatusCode < 500 && hit.StatusCode != 404 && hit.StatusCode != 400 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// runDirEnum executes concurrent directory enumeration with the given wordlist and scanType.
+func runDirEnum(targetURL string, outputFile string, words []string, scanType string) DirEnumResult {
 	// Check cached scan results first
 	if outputFile != "" {
 		if !strings.Contains(outputFile, "/") {
@@ -124,7 +155,8 @@ func DirEnum(targetURL string, outputFile string) DirEnumResult {
 			if err == nil && len(data) > 0 {
 				var cached DirEnumResult
 				if err := json.Unmarshal(data, &cached); err == nil && cached.TargetURL != "" {
-					utils.LogSuccess("Loaded cached directory enumeration results from %s (%s hits)",
+					utils.LogSuccess("Loaded cached %s results from %s (%s hits)",
+						scanType,
 						outputFile,
 						utils.ColorHighlight.Sprintf("%d", len(cached.Hits)),
 					)
@@ -135,12 +167,12 @@ func DirEnum(targetURL string, outputFile string) DirEnumResult {
 	}
 
 	startTime := time.Now()
-	utils.LogAction("Starting native directory enumeration on %s", targetURL)
+	utils.LogAction("Starting native %s on %s", scanType, targetURL)
 
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
 		utils.LogError("Invalid target URL for directory enumeration: %v", err)
-		return DirEnumResult{TargetURL: targetURL}
+		return DirEnumResult{TargetURL: targetURL, ScanType: scanType}
 	}
 
 	if parsedURL.Scheme == "" {
@@ -148,10 +180,7 @@ func DirEnum(targetURL string, outputFile string) DirEnumResult {
 	}
 	targetURL = strings.TrimRight(targetURL, "/")
 
-	// 1. Prepare wordlist (loads locally or downloads once from remote SecLists)
-	words := loadCommonWordlist()
-
-	// 2. Setup connection-pooled HTTP client (do not follow redirects so we can record 301/302)
+	// Setup connection-pooled HTTP client (do not follow redirects so we can record 301/302)
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
@@ -173,10 +202,10 @@ func DirEnum(targetURL string, outputFile string) DirEnumResult {
 		},
 	}
 
-	// 3. Auto-Calibrate for Soft-404 detection
+	// Auto-Calibrate for Soft-404 detection
 	calibrated404 := calibrateSoft404(client, targetURL)
 
-	// 4. Worker Pool Execution
+	// Worker Pool Execution
 	concurrency := 25
 	jobs := make(chan string, len(words))
 	resultsChan := make(chan DirHit, len(words))
@@ -215,13 +244,15 @@ func DirEnum(targetURL string, outputFile string) DirEnumResult {
 	duration := time.Since(startTime).Round(time.Millisecond).String()
 	res := DirEnumResult{
 		TargetURL:  targetURL,
+		ScanType:   scanType,
 		TotalWords: len(words),
 		Hits:       hits,
 		Duration:   duration,
 		Soft404:    calibrated404.IsSoft404,
 	}
 
-	utils.LogSuccess("Directory enumeration complete: %s hits in %s",
+	utils.LogSuccess("%s complete: %s hits in %s",
+		scanType,
 		utils.ColorHighlight.Sprintf("%d", len(hits)),
 		duration,
 	)
@@ -233,7 +264,7 @@ func DirEnum(targetURL string, outputFile string) DirEnumResult {
 		}
 		if data, err := json.MarshalIndent(res, "", "  "); err == nil {
 			_ = os.WriteFile(outputFile, data, 0644)
-			utils.LogSuccess("Saved directory enumeration results to %s", outputFile)
+			utils.LogSuccess("Saved %s results to %s", scanType, outputFile)
 		}
 	}
 
@@ -407,6 +438,88 @@ func loadCommonWordlist() []string {
 	}
 
 	return defaultHighImpactWordlist
+}
+
+// loadPHPWordlist loads SecLists Common-PHP-Filenames.txt, caching it at $HOME/.local/wordlists/Common-PHP-Filenames.txt so it only downloads once.
+func loadPHPWordlist() []string {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = os.Getenv("HOME")
+	}
+	cacheFile := filepath.Join(home, ".local", "wordlists", "Common-PHP-Filenames.txt")
+	if utils.FileExists(cacheFile) {
+		lines := utils.ReadLines(cacheFile)
+		if len(lines) > 0 {
+			return lines
+		}
+	}
+
+	// Fetch remote SecLists Common-PHP-Filenames.txt
+	words := utils.ReadLinesRemote("https://raw.githubusercontent.com/danielmiessler/SecLists/refs/heads/master/Discovery/Web-Content/Programming-Language-Specific/Common-PHP-Filenames.txt")
+	if len(words) > 0 {
+		utils.CheckAndCreateDir(filepath.Dir(cacheFile))
+		_ = os.WriteFile(cacheFile, []byte(strings.Join(words, "\n")), 0644)
+		return words
+	}
+
+	return defaultPHPWordlist
+}
+
+// defaultPHPWordlist provides an offline fallback list of sensitive PHP endpoints.
+var defaultPHPWordlist = []string{
+	"index.php",
+	"config.php",
+	"config.inc.php",
+	"configuration.php",
+	"wp-config.php",
+	"wp-login.php",
+	"admin.php",
+	"admin/index.php",
+	"login.php",
+	"user.php",
+	"users.php",
+	"auth.php",
+	"dashboard.php",
+	"db.php",
+	"database.php",
+	"connect.php",
+	"connection.php",
+	"conn.php",
+	"sql.php",
+	"info.php",
+	"phpinfo.php",
+	"test.php",
+	"upload.php",
+	"uploader.php",
+	"file.php",
+	"download.php",
+	"setup.php",
+	"install.php",
+	"update.php",
+	"upgrade.php",
+	"shell.php",
+	"cmd.php",
+	"eval.php",
+	"xmlrpc.php",
+	"api.php",
+	"ajax.php",
+	"search.php",
+	"profile.php",
+	"register.php",
+	"logout.php",
+	"cron.php",
+	"backup.php",
+	"dump.php",
+	"export.php",
+	"import.php",
+	"functions.php",
+	"header.php",
+	"footer.php",
+	"common.php",
+	"main.php",
+	"home.php",
+	"status.php",
+	"health.php",
 }
 
 // loadWordlist returns user-supplied wordlist lines or the curated embedded wordlist.
