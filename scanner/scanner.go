@@ -95,7 +95,24 @@ func Run(t *Target) {
 				phpDirsResult := DirEnumPHP(endpointURL, path.Join(t.OutDir(), phpOutFileName))
 				if len(phpDirsResult.Hits) > 0 {
 					fmt.Println(phpDirsResult)
-					allHits = append(allHits, phpDirsResult.Hits...)
+					for _, h := range phpDirsResult.Hits {
+						if !containsHit(allHits, h.Path) {
+							allHits = append(allHits, h)
+						}
+					}
+				}
+			}
+
+			// API Endpoint & Unauthenticated Route Hunting (catches orphaned routes like /api/users even if /api 404s)
+			utils.LogAction("Hunting for API endpoints and unauthenticated routes on %s...", endpointURL)
+			apiOutFileName := fmt.Sprintf("dirs_api_%d.json", p.Port)
+			apiDirsResult := DirEnumAPI(endpointURL, path.Join(t.OutDir(), apiOutFileName))
+			if len(apiDirsResult.Hits) > 0 {
+				fmt.Println(apiDirsResult)
+				for _, h := range apiDirsResult.Hits {
+					if !containsHit(allHits, h.Path) {
+						allHits = append(allHits, h)
+					}
 				}
 			}
 
@@ -103,6 +120,17 @@ func Run(t *Target) {
 			ProcessAndExtractAssets(t, p.Port, endpointURL, allHits)
 		}
 	}
+}
+
+// containsHit checks if a path is already present in a slice of DirHits.
+func containsHit(hits []DirHit, targetPath string) bool {
+	targetClean := strings.TrimPrefix(strings.TrimSpace(targetPath), "/")
+	for _, h := range hits {
+		if strings.TrimPrefix(strings.TrimSpace(h.Path), "/") == targetClean {
+			return true
+		}
+	}
+	return false
 }
 
 // isHTTPService checks if a port is likely running an HTTP or HTTPS service.

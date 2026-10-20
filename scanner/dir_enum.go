@@ -27,17 +27,19 @@ import (
 
 // DirHit represents an individual path discovered during directory enumeration.
 type DirHit struct {
-	Path        string   `json:"path"`
-	URL         string   `json:"url"`
-	StatusCode  int      `json:"status_code"`
-	StatusText  string   `json:"status_text,omitempty"`
-	ContentLen  int64    `json:"content_length"`
-	Title       string   `json:"title,omitempty"`
-	RedirectURL string   `json:"redirect_url,omitempty"`
-	ContentType string   `json:"content_type,omitempty"`
-	Links       []string `json:"links,omitempty"`
-	Params      []string `json:"params,omitempty"`
-	JSFiles     []string `json:"js_files,omitempty"`
+	Path            string   `json:"path"`
+	URL             string   `json:"url"`
+	StatusCode      int      `json:"status_code"`
+	StatusText      string   `json:"status_text,omitempty"`
+	ContentLen      int64    `json:"content_length"`
+	Title           string   `json:"title,omitempty"`
+	RedirectURL     string   `json:"redirect_url,omitempty"`
+	ContentType     string   `json:"content_type,omitempty"`
+	IsAPI           bool     `json:"is_api,omitempty"`
+	Unauthenticated bool     `json:"unauthenticated,omitempty"`
+	Links           []string `json:"links,omitempty"`
+	Params          []string `json:"params,omitempty"`
+	JSFiles         []string `json:"js_files,omitempty"`
 }
 
 // DirEnumResult contains all findings from the directory enumeration scan.
@@ -109,6 +111,7 @@ func (r DirEnumResult) String() string {
 		} else if hit.Title != "" {
 			extra = fmt.Sprintf(" [%s]", utils.ColorBold.Sprint(hit.Title))
 		}
+		extra += formatHitBadge(hit)
 
 		sb.WriteString(fmt.Sprintf("    %s %s %s %s%s\n",
 			tag,
@@ -122,6 +125,46 @@ func (r DirEnumResult) String() string {
 	return sb.String()
 }
 
+// isAPIEndpoint checks whether a path or response represents an API endpoint.
+func isAPIEndpoint(pathStr, contentType string) bool {
+	lowerPath := strings.ToLower(pathStr)
+	if strings.HasPrefix(lowerPath, "/api") ||
+		strings.HasPrefix(lowerPath, "api/") ||
+		strings.HasPrefix(lowerPath, "/v1") ||
+		strings.HasPrefix(lowerPath, "v1/") ||
+		strings.HasPrefix(lowerPath, "/v2") ||
+		strings.HasPrefix(lowerPath, "v2/") ||
+		strings.HasPrefix(lowerPath, "/v3") ||
+		strings.HasPrefix(lowerPath, "v3/") ||
+		strings.HasPrefix(lowerPath, "/rest") ||
+		strings.HasPrefix(lowerPath, "rest/") ||
+		strings.HasPrefix(lowerPath, "/graphql") ||
+		strings.HasPrefix(lowerPath, "/swagger") ||
+		strings.HasPrefix(lowerPath, "/openapi") {
+		return true
+	}
+	ct := strings.ToLower(contentType)
+	if strings.Contains(ct, "json") || strings.Contains(ct, "graphql") {
+		return true
+	}
+	return false
+}
+
+// formatHitBadge returns contextual tags for API endpoints and unauthenticated discoveries.
+func formatHitBadge(hit DirHit) string {
+	if hit.IsAPI {
+		switch hit.StatusCode {
+		case http.StatusOK:
+			return fmt.Sprintf(" %s", utils.ColorCritical.Sprint("[UNAUTHENTICATED API]"))
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return fmt.Sprintf(" %s", utils.ColorWarn.Sprint("[Protected API]"))
+		case http.StatusMethodNotAllowed:
+			return fmt.Sprintf(" %s", utils.ColorInfo.Sprint("[Method Not Allowed]"))
+		}
+	}
+	return ""
+}
+
 // DirEnum performs fast, concurrent native Go directory and file discovery on targetUrl using the common wordlist.
 func DirEnum(targetURL string, outputFile string) DirEnumResult {
 	words := loadCommonWordlist()
@@ -132,6 +175,12 @@ func DirEnum(targetURL string, outputFile string) DirEnumResult {
 func DirEnumPHP(targetURL string, outputFile string) DirEnumResult {
 	words := loadPHPWordlist()
 	return runDirEnum(targetURL, outputFile, words, "PHP Directory Enumeration")
+}
+
+// DirEnumAPI performs API route and unauthenticated endpoint discovery on targetUrl.
+func DirEnumAPI(targetURL string, outputFile string) DirEnumResult {
+	words := loadAPIWordlist()
+	return runDirEnum(targetURL, outputFile, words, "API Endpoint Enumeration")
 }
 
 // HasIndexPHP checks if /index.php was discovered during directory enumeration.
@@ -358,8 +407,13 @@ func probePath(client *http.Client, baseURL, word string, cal soft404Signature, 
 		contentLen = resp.ContentLength
 	}
 
-	// Filter out calibrated soft-404s
-	if cal.IsSoft404 && resp.StatusCode == cal.StatusCode {
+	// Filter out calibrated soft-404s (do not discard valid JSON responses)
+	contentType := resp.Header.Get("Content-Type")
+	isJSON := strings.Contains(strings.ToLower(contentType), "json") ||
+		strings.HasPrefix(strings.TrimSpace(string(body)), "{") ||
+		strings.HasPrefix(strings.TrimSpace(string(body)), "[")
+
+	if cal.IsSoft404 && resp.StatusCode == cal.StatusCode && !isJSON {
 		// If response length is within +/- 5% or title matches soft-404, discard as false-positive
 		diff := math.Abs(float64(contentLen - cal.ContentLen))
 		if (cal.Title != "" && title == cal.Title) || (diff < 32 && diff < float64(cal.ContentLen)*0.05) {
@@ -392,19 +446,23 @@ func probePath(client *http.Client, baseURL, word string, cal soft404Signature, 
 	}
 
 	redirectLocation := resp.Header.Get("Location")
+	isAPI := isAPIEndpoint(word, contentType)
+	isUnauth := isAPI && resp.StatusCode == http.StatusOK
 
 	hit := DirHit{
-		Path:        word,
-		URL:         fullURL,
-		StatusCode:  resp.StatusCode,
-		StatusText:  http.StatusText(resp.StatusCode),
-		ContentLen:  contentLen,
-		Title:       title,
-		RedirectURL: redirectLocation,
-		ContentType: resp.Header.Get("Content-Type"),
-		Links:       links,
-		Params:      params,
-		JSFiles:     jsFiles,
+		Path:            word,
+		URL:             fullURL,
+		StatusCode:      resp.StatusCode,
+		StatusText:      http.StatusText(resp.StatusCode),
+		ContentLen:      contentLen,
+		Title:           title,
+		RedirectURL:     redirectLocation,
+		ContentType:     contentType,
+		IsAPI:           isAPI,
+		Unauthenticated: isUnauth,
+		Links:           links,
+		Params:          params,
+		JSFiles:         jsFiles,
 	}
 
 	return hit, true
@@ -415,6 +473,9 @@ func printHitLive(hit DirHit) {
 	statusColor := utils.ColorSuccess.Sprint(fmt.Sprintf("%-3d", hit.StatusCode))
 
 	switch {
+	case hit.Unauthenticated:
+		tag = utils.TagCritical()
+		statusColor = utils.ColorCritical.Sprint(fmt.Sprintf("%-3d", hit.StatusCode))
 	case hit.StatusCode >= 300 && hit.StatusCode < 400:
 		tag = utils.TagInfo()
 		statusColor = utils.ColorInfo.Sprint(fmt.Sprintf("%-3d", hit.StatusCode))
@@ -432,6 +493,7 @@ func printHitLive(hit DirHit) {
 	} else if hit.Title != "" {
 		extra = fmt.Sprintf(" [%s]", utils.ColorBold.Sprint(hit.Title))
 	}
+	extra += formatHitBadge(hit)
 	if len(hit.Params) > 0 || len(hit.JSFiles) > 0 {
 		extra += fmt.Sprintf(" %s", utils.ColorDim.Sprintf("(params: %d, js: %d)", len(hit.Params), len(hit.JSFiles)))
 	}
@@ -502,6 +564,66 @@ func loadPHPWordlist() []string {
 	}
 
 	return defaultPHPWordlist
+}
+
+// loadAPIWordlist loads SecLists api-endpoints.txt (cached locally at ~/.local/wordlists/api-endpoints.txt),
+// and merges it with DefaultAPIWordlist and dynamic entity permutations to guarantee coverage of critical API endpoints.
+func loadAPIWordlist() []string {
+	var words []string
+	seen := make(map[string]bool)
+
+	addWord := func(w string) {
+		w = strings.TrimSpace(w)
+		if w != "" && !strings.HasPrefix(w, "#") && !seen[w] {
+			seen[w] = true
+			words = append(words, w)
+		}
+	}
+
+	// 1. Always prioritize DefaultAPIWordlist (curated top routes)
+	for _, w := range DefaultAPIWordlist {
+		addWord(w)
+	}
+
+	// 2. Dynamic generation: combine API prefixes with KnownEntities
+	prefixes := []string{"api", "api/v1", "v1", "rest"}
+	for entity := range KnownEntities {
+		singular := singularizeEntity(entity)
+		plural := singular + "s"
+		for _, prefix := range prefixes {
+			addWord(prefix + "/" + plural)
+			addWord(prefix + "/" + singular)
+		}
+	}
+
+	// 3. Check local cache, local SecLists, or fetch remote
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = os.Getenv("HOME")
+	}
+	cacheFile := filepath.Join(home, ".local", "wordlists", "api-endpoints.txt")
+	seclistsPath := "/usr/share/seclists/Discovery/Web-Content/api/api-endpoints.txt"
+
+	var extraLines []string
+	if utils.FileExists(cacheFile) {
+		extraLines = utils.ReadLines(cacheFile)
+	} else if utils.FileExists(seclistsPath) {
+		extraLines = utils.ReadLines(seclistsPath)
+		utils.CheckAndCreateDir(filepath.Dir(cacheFile))
+		_ = os.WriteFile(cacheFile, []byte(strings.Join(extraLines, "\n")), 0644)
+	} else {
+		extraLines = utils.ReadLinesRemote("https://raw.githubusercontent.com/danielmiessler/SecLists/refs/heads/master/Discovery/Web-Content/api/api-endpoints.txt")
+		if len(extraLines) > 0 {
+			utils.CheckAndCreateDir(filepath.Dir(cacheFile))
+			_ = os.WriteFile(cacheFile, []byte(strings.Join(extraLines, "\n")), 0644)
+		}
+	}
+
+	for _, l := range extraLines {
+		addWord(l)
+	}
+
+	return words
 }
 
 // loadWordlist returns user-supplied wordlist lines or the curated embedded wordlist.
