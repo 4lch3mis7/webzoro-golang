@@ -53,8 +53,8 @@ func Naabu(t *Target, outputFile string) NaabuOutput {
 			WarmUpTime: 1,    // seconds
 
 			// Reliability vs speed: 1 retry is enough; 1500ms timeout was the main bottleneck
-			Retries: 2,
-			Timeout: 1500, // ms — sufficient for LAN/VPN; raise to 1500 for WAN targets
+			Retries: 3,
+			Timeout: 750, // ms — sufficient for LAN/VPN; raise to 1500 for WAN targets
 
 			Output:        outputFile,
 			JSON:          true,
