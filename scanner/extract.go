@@ -42,6 +42,13 @@ type JSAnalysisReport struct {
 	AuthSmells []string `json:"auth_smells,omitempty"`
 }
 
+// FormSurface represents an HTML form discovered on a page with its submission target, method, and input parameters.
+type FormSurface struct {
+	Action string   `json:"action"`
+	Method string   `json:"method"`
+	Inputs []string `json:"inputs"`
+}
+
 // ExtractedAssets stores deduplicated endpoints, parameters, inferred candidates, and JS files.
 type ExtractedAssets struct {
 	TargetURL      string             `json:"target_url"`
@@ -53,6 +60,7 @@ type ExtractedAssets struct {
 	IDORCandidates []IDORCandidate    `json:"idor_candidates"`
 	JSFiles        []string           `json:"js_files"`
 	AuthSurfaces   []AuthSurface      `json:"auth_surfaces,omitempty"`
+	FormSurfaces   []FormSurface      `json:"form_surfaces,omitempty"`
 	JSReports      []JSAnalysisReport `json:"js_analysis,omitempty"`
 }
 
@@ -60,6 +68,12 @@ var (
 	// Link & Asset regexes
 	hrefSrcActionRegex = regexp.MustCompile(`(?i)(?:href|src|action|data-url)\s*=\s*["']([^"'#\s>]+)["']`)
 	scriptSrcRegex     = regexp.MustCompile(`(?i)<script[^>]+src\s*=\s*["']([^"'#\s>]+)["']`)
+
+	// HTML Form boundary & attribute regexes
+	genericFormRegex    = regexp.MustCompile(`(?is)<form\b([^>]*)>(.*?)</form>`)
+	formOpenTagRegex    = regexp.MustCompile(`(?is)<form\b([^>]*)>(.*)`)
+	formActionAttrRegex = regexp.MustCompile(`(?i)\baction\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	formMethodAttrRegex = regexp.MustCompile(`(?i)\bmethod\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
 
 	// Form input regexes (captures hidden and state fields)
 	formInputTagRegex = regexp.MustCompile(`(?i)<(?:input|textarea|select)[^>]*>`)
@@ -441,6 +455,117 @@ func ExtractFormIDORCandidates(body []byte, baseURL *url.URL) []IDORCandidate {
 	}
 
 	return candidates
+}
+
+func extractAttrVal(m []string) string {
+	for i := 1; i < len(m); i++ {
+		if m[i] != "" {
+			return strings.TrimSpace(m[i])
+		}
+	}
+	return ""
+}
+
+// ExtractFormsFromHTML parses HTML content to uncover all forms, actions, methods, and input fields.
+func ExtractFormsFromHTML(body []byte, baseURL *url.URL) []FormSurface {
+	var forms []FormSurface
+	bodyStr := string(body)
+
+	matches := genericFormRegex.FindAllStringSubmatch(bodyStr, -1)
+	if len(matches) == 0 && strings.Contains(strings.ToLower(bodyStr), "<form") {
+		openMatches := formOpenTagRegex.FindAllStringSubmatch(bodyStr, -1)
+		for _, om := range openMatches {
+			if len(om) >= 3 {
+				inner := om[2]
+				if idx := strings.Index(strings.ToLower(inner), "</body"); idx != -1 {
+					inner = inner[:idx]
+				}
+				matches = append(matches, []string{om[0], om[1], inner})
+			}
+		}
+	}
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		attrs := match[1]
+		inner := match[2]
+
+		// Extract action and resolve URL
+		action := ""
+		if actMatch := formActionAttrRegex.FindStringSubmatch(attrs); len(actMatch) > 1 {
+			action = extractAttrVal(actMatch)
+		}
+
+		resolvedURL := baseURL.String()
+		if action != "" && action != "#" && !strings.HasPrefix(action, "javascript:") {
+			if strings.HasPrefix(action, "http://") || strings.HasPrefix(action, "https://") {
+				resolvedURL = action
+			} else {
+				relU, err := url.Parse(action)
+				if err == nil {
+					resolvedURL = baseURL.ResolveReference(relU).String()
+				}
+			}
+		}
+
+		// Extract method (default to GET if unspecified)
+		method := "GET"
+		if methMatch := formMethodAttrRegex.FindStringSubmatch(attrs); len(methMatch) > 1 {
+			m := strings.ToUpper(extractAttrVal(methMatch))
+			if m != "" {
+				method = m
+			}
+		}
+
+		// Collect form fields (<input>, <textarea>, <select>)
+		var inputNames []string
+		seenInput := make(map[string]bool)
+
+		for _, inputTag := range formInputTagRegex.FindAllString(inner, -1) {
+			typeMatch := attrTypeRegex.FindStringSubmatch(inputTag)
+			if len(typeMatch) > 1 {
+				typeVal := strings.ToLower(strings.TrimSpace(typeMatch[1]))
+				if typeVal == "submit" || typeVal == "reset" || typeVal == "button" || typeVal == "image" {
+					continue
+				}
+			}
+
+			nameMatch := attrNameRegex.FindStringSubmatch(inputTag)
+			if len(nameMatch) <= 1 {
+				continue
+			}
+			name := strings.TrimSpace(nameMatch[1])
+			if isValidParam(name) && !seenInput[name] {
+				seenInput[name] = true
+				inputNames = append(inputNames, name)
+			}
+		}
+
+		if len(inputNames) > 0 {
+			forms = append(forms, FormSurface{
+				Action: resolvedURL,
+				Method: method,
+				Inputs: inputNames,
+			})
+		}
+	}
+
+	return forms
+}
+
+// deduplicateFormSurfaces removes duplicate form surfaces based on method, action, and inputs.
+func deduplicateFormSurfaces(forms []FormSurface) []FormSurface {
+	seen := make(map[string]bool)
+	var deduped []FormSurface
+	for _, f := range forms {
+		k := fmt.Sprintf("%s|%s|%s", f.Method, f.Action, strings.Join(f.Inputs, ","))
+		if !seen[k] {
+			seen[k] = true
+			deduped = append(deduped, f)
+		}
+	}
+	return deduped
 }
 
 // isStaticAssetPath returns true if a path points to static or media assets rather than API resources.
@@ -931,6 +1056,7 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 	var idorCandidates []IDORCandidate
 	seenIDOR := make(map[string]bool)
 	var allAuthSurfaces []AuthSurface
+	var allForms []FormSurface
 
 	addIDOR := func(c IDORCandidate) {
 		key := fmt.Sprintf("%s|%s|%s", c.URL, c.Source, c.DetectedID)
@@ -1022,6 +1148,17 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 		// Extract hidden form inputs as IDOR candidates
 		for _, cand := range ExtractFormIDORCandidates(body, uParsed) {
 			addIDOR(cand)
+		}
+
+		// Extract all HTML forms and register endpoints + parameters
+		for _, f := range ExtractFormsFromHTML(body, uParsed) {
+			allForms = append(allForms, f)
+			if f.Action != "" {
+				masterLinks[f.Action] = true
+			}
+			for _, p := range f.Inputs {
+				masterParams[p] = true
+			}
 		}
 
 		// Passively extract auth surfaces and recovery workflows from HTML
@@ -1215,11 +1352,12 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 		IDORCandidates: idorCandidates,
 		JSFiles:        setToSlice(masterJS),
 		AuthSurfaces:   DeduplicateAuthSurfaces(allAuthSurfaces),
+		FormSurfaces:   deduplicateFormSurfaces(allForms),
 		JSReports:      jsReports,
 	}
 
 	// Active parameter verification (if --verify-params is enabled)
-	if t.VerifyParams && (len(assets.InferredParams) > 0 || len(assets.Parameters) > 0) {
+	if t.VerifyParams {
 		utils.LogAction("Actively verifying candidate parameters against dynamic endpoints...")
 		assets.VerifiedParams = VerifyParameters(t, port, baseURLStr, assets)
 	}
@@ -1357,10 +1495,18 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 				utils.ColorDim.Sprint(verifiedJSONFile),
 			)
 			for _, v := range assets.VerifiedParams {
-				fmt.Printf("        • %s -> [%s] (%s)\n",
+				methodStr := v.Method
+				if methodStr == "" {
+					methodStr = "GET"
+				}
+				if v.PostFormat != "" {
+					methodStr += " " + strings.ToUpper(v.PostFormat)
+				}
+				fmt.Printf("        • [%s] %s -> [%s] (%s)\n",
+					utils.ColorVersion.Sprint(methodStr),
 					utils.ColorBold.Sprint(v.Endpoint),
 					utils.ColorHighlight.Sprint(v.Param),
-					utils.ColorVersion.Sprint(v.Description),
+					utils.ColorDim.Sprint(v.Description),
 				)
 			}
 		} else {
@@ -1424,6 +1570,33 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 					fmt.Printf("            %s %s\n", utils.ColorDim.Sprint("Evidence:"), utils.ColorVersion.Sprint(smell.Evidence))
 				}
 			}
+		}
+	}
+	if len(assets.FormSurfaces) > 0 {
+		formsJSONFile := filepath.Join(t.OutDir(), "forms.json")
+		if data, err := json.MarshalIndent(assets.FormSurfaces, "", "  "); err == nil {
+			_ = os.WriteFile(formsJSONFile, data, 0644)
+		}
+		fmt.Printf("      - %-20s: %s HTML form surface(s) detected -> %s\n",
+			utils.ColorHeader.Sprint("HTML Forms"),
+			utils.ColorHighlight.Sprintf("%d", len(assets.FormSurfaces)),
+			utils.ColorDim.Sprint(formsJSONFile),
+		)
+		maxPreview := 3
+		if len(assets.FormSurfaces) < maxPreview {
+			maxPreview = len(assets.FormSurfaces)
+		}
+		for i := 0; i < maxPreview; i++ {
+			f := assets.FormSurfaces[i]
+			inputsStr := strings.Join(f.Inputs, ", ")
+			if inputsStr != "" {
+				inputsStr = " [inputs: " + inputsStr + "]"
+			}
+			fmt.Printf("        • [%s] %s%s\n",
+				utils.ColorVersion.Sprint(f.Method),
+				utils.ColorBold.Sprint(f.Action),
+				utils.ColorDim.Sprint(inputsStr),
+			)
 		}
 	}
 	if len(assets.JSFiles) > 0 {

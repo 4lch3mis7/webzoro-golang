@@ -117,7 +117,12 @@ func Run(t *Target) {
 			}
 
 			// Save HTTP responses and extract links, parameters, and JS files
-			ProcessAndExtractAssets(t, p.Port, endpointURL, allHits)
+			assets := ProcessAndExtractAssets(t, p.Port, endpointURL, allHits)
+
+			// Server-Side Template Injection (SSTI) & Werkzeug/Flask audit
+			if t.CheckSSTI {
+				AuditSSTI(t, p.Port, endpointURL, assets)
+			}
 		}
 	}
 }

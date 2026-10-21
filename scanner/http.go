@@ -351,6 +351,13 @@ func auditBannersAndTech(headers http.Header, res *HTTPAuditResult) {
 	server := headers.Get("Server")
 	if server != "" {
 		res.ServerHeader = server
+		if strings.Contains(strings.ToLower(server), "werkzeug") {
+			res.Technologies = append(res.Technologies, "Werkzeug (Python/Flask)")
+			res.HeaderFindings = append(res.HeaderFindings,
+				fmt.Sprintf("[!] WARNING: Server runs Werkzeug Python framework (%s) - check for exposed /console and SSTI", server),
+			)
+			res.Recommendations = append(res.Recommendations, "Disable Werkzeug development server and debug mode in production (use Gunicorn/uWSGI)")
+		}
 		if regexp.MustCompile(`[0-9]+\.[0-9]+`).MatchString(server) {
 			res.HeaderFindings = append(res.HeaderFindings,
 				fmt.Sprintf("[!] WARNING: Server banner exposes granular version: %s", server),
@@ -551,6 +558,9 @@ func auditCookies(cookies []*http.Cookie, scheme string, res *HTTPAuditResult) {
 			issues = append(issues, "missing or permissive SameSite attribute (CSRF risk)")
 			allSecure = false
 		}
+		if strings.HasPrefix(c.Value, ".eJ") || strings.HasPrefix(c.Value, "ey") {
+			res.Technologies = append(res.Technologies, fmt.Sprintf("Flask Session Cookie ('%s')", c.Name))
+		}
 
 		if len(issues) > 0 {
 			res.CookieFindings = append(res.CookieFindings,
@@ -645,6 +655,29 @@ func auditSensitiveEndpoints(client *http.Client, baseURL string, res *HTTPAudit
 			matcher: func(status int, body []byte) (bool, string) {
 				if status == http.StatusOK && strings.Contains(strings.ToLower(string(body)), "openapi") {
 					return true, "[!] WARNING: OpenAPI schema definition exposed (/openapi.json)"
+				}
+				return false, ""
+			},
+		},
+		{
+			path: "/console",
+			matcher: func(status int, body []byte) (bool, string) {
+				bodyStr := string(body)
+				if status == http.StatusOK && (strings.Contains(bodyStr, "console_pinned") || strings.Contains(bodyStr, "Werkzeug") || strings.Contains(bodyStr, "DEBUGGER_TOKEN")) {
+					if strings.Contains(bodyStr, "console_pinned = false") || !strings.Contains(bodyStr, "console_pinned") {
+						return true, "[!] CRITICAL: Werkzeug Interactive Debugger Console exposed without PIN lock (/console)"
+					}
+					return true, "[!] WARNING: Werkzeug Interactive Debugger Console exposed (/console - PIN protected)"
+				}
+				return false, ""
+			},
+		},
+		{
+			path: "/console?__debugger__=yes",
+			matcher: func(status int, body []byte) (bool, string) {
+				bodyStr := string(body)
+				if status == http.StatusOK && strings.Contains(bodyStr, "Werkzeug") && strings.Contains(bodyStr, "console") {
+					return true, "[!] WARNING: Werkzeug Debugger Console frame reachable (/console?__debugger__=yes)"
 				}
 				return false, ""
 			},

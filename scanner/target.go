@@ -19,6 +19,7 @@ type Target struct {
 	Subdomains   []string
 	Verbose      bool
 	VerifyParams bool
+	CheckSSTI    bool
 	Credentials  []struct {
 		Service  string
 		Port     int

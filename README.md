@@ -27,6 +27,9 @@ go build -o webzoro main.go
 
 # Actively verify candidate parameters against dynamic endpoints
 ./webzoro <host> --verify-params
+
+# Test dynamic endpoints and reflected parameters for Server-Side Template Injection (SSTI)
+./webzoro <host> --check-ssti
 ```
 
 ## Terminal Colors
@@ -82,6 +85,7 @@ Vulnerability severities (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) and exploit state
 | **High-Risk Parameter Names** (`user_id`, `role`, `tenant_id`, `order_no`, `account`) | Parameters that directly control object reference or privilege level. | **Parameter Classification & IDOR Candidate Tagging**: Categorizes parameters into `Object Reference (IDOR)`, `Privilege / Role`, and `Resource / File Path`. |
 | **Auth & Password Recovery Flows** (`/forgot-password`, `/reset?token=...`, `res.token`) | Authentication and recovery endpoints with client-side token reads, pre-seeded hidden fields, or leaked URL tokens. | **Dedicated Passive Auth Analyzer**: Maps login, registration, and password reset flows; flags missing CSRF tokens, pre-seeded OTP/tokens in hidden inputs, active URL reset tokens, and client-side JS inspecting response tokens. |
 | **Orphaned / Hidden API Routes** (`/api` returns 404, but `/api/users` works) | Modern routers mount virtual handlers without an index handler at root `/api`. Traditional recursive scanners prune on 404 and wordlists lack combined paths. | **API Route & Unauthenticated Endpoint Hunter**: Concurrently probes high-impact prefix-resource permutations (`/api/users`, `/v1/auth`, etc.) independent of parent 404s, tagging exposed unauthenticated JSON endpoints. |
+| **Template Injection & Werkzeug Console** (`{{7*7}}` -> `49`, `/console`, `Server: Werkzeug`) | Reflected parameters string-interpolated into template engines (Flask Jinja2, Twig) or exposed Werkzeug interactive debug console. | **SSTI & Werkzeug Auditor**: Evaluates arithmetic evaluation canaries (`{{491*13}}`), fingerprints template engine (`{{7*'7'}}`), verifies safe context globals (`{{lipsum}}`), and probes for unauthenticated `/console`. |
 
 ---
 

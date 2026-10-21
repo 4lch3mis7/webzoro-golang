@@ -531,3 +531,18 @@ var StaticFileExtensions = map[string]bool{
 	".ttf": true, ".eot": true, ".map": true, ".txt": true, ".pdf": true,
 	".zip": true, ".tar": true, ".gz": true, ".xml": true, ".mp4": true,
 }
+
+// ============================================================================
+// Parameter Verification Wordlists
+// ============================================================================
+
+// DefaultHighImpactParams provides top web parameters for differential probing and hidden parameter discovery.
+var DefaultHighImpactParams = []string{
+	"id", "user", "username", "email", "q", "query", "search", "s",
+	"page", "limit", "offset", "file", "path", "url", "redirect", "next",
+	"data", "text", "name", "title", "content", "msg", "message", "input",
+	"cmd", "command", "exec", "code", "token", "key", "secret", "view",
+	"action", "type", "format", "callback", "debug", "admin", "test",
+	"filter", "sort", "order", "category", "ref", "doc", "payload",
+	"pickle_data", "raw", "template", "render",
+}
