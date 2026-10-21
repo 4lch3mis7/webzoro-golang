@@ -1288,6 +1288,11 @@ func ProcessAndExtractAssets(t *Target, port int, baseURLStr string, hits []DirH
 			utils.ColorHighlight.Sprintf("%d", len(assets.Links)),
 			utils.ColorDim.Sprint(linksFile),
 		)
+		if t.Verbose {
+			for _, l := range assets.Links {
+				fmt.Printf("        • %s\n", utils.ColorHighlight.Sprint(l))
+			}
+		}
 	}
 	if len(assets.Parameters) > 0 {
 		if t.Verbose {

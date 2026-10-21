@@ -494,8 +494,18 @@ func printHitLive(hit DirHit) {
 		extra = fmt.Sprintf(" [%s]", utils.ColorBold.Sprint(hit.Title))
 	}
 	extra += formatHitBadge(hit)
-	if len(hit.Params) > 0 || len(hit.JSFiles) > 0 {
-		extra += fmt.Sprintf(" %s", utils.ColorDim.Sprintf("(params: %d, js: %d)", len(hit.Params), len(hit.JSFiles)))
+	var badges []string
+	if len(hit.Links) > 0 {
+		badges = append(badges, fmt.Sprintf("links: %d", len(hit.Links)))
+	}
+	if len(hit.Params) > 0 {
+		badges = append(badges, fmt.Sprintf("params: %d", len(hit.Params)))
+	}
+	if len(hit.JSFiles) > 0 {
+		badges = append(badges, fmt.Sprintf("js: %d", len(hit.JSFiles)))
+	}
+	if len(badges) > 0 {
+		extra += fmt.Sprintf(" %s", utils.ColorDim.Sprintf("(%s)", strings.Join(badges, ", ")))
 	}
 
 	fmt.Printf("    %s %s %-8s %s%s\n",
